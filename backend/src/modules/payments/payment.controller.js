@@ -6,9 +6,13 @@ export const getAllPayments = async (req, res) => {
         const payments = await prisma.payment.findMany({
             include: {
                 order: {
-                    select: {
-                        order_id: true,
+                    include: {
                         table: { select: { table_number: true } },
+                        order_items: {
+                            include: {
+                                menu_item: { select: { item_name: true, item_name_km: true, price: true } },
+                            },
+                        },
                     },
                 },
                 user: { select: { username: true } },
@@ -29,9 +33,13 @@ export const getPaymentById = async (req, res) => {
             where: { payment_id: parseInt(req.params.id) },
             include: {
                 order: {
-                    select: {
-                        order_id: true,
+                    include: {
                         table: { select: { table_number: true } },
+                        order_items: {
+                            include: {
+                                menu_item: { select: { item_name: true, item_name_km: true, price: true } },
+                            },
+                        },
                     },
                 },
                 user: { select: { username: true } },
