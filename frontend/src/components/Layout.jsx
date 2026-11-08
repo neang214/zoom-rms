@@ -4,7 +4,7 @@ import { useTheme } from "next-themes"
 import {
   LayoutDashboard, UtensilsCrossed, Package, TableIcon,
   CreditCard, Users, Truck, LogOut, Bell, Moon, Sun,
-  Menu as MenuIcon, ChefHat, ShoppingBag, Coffee, Clock, BarChart3, ClipboardList, Volume2
+  Menu as MenuIcon, ChefHat, ShoppingBag, Coffee, Clock, BarChart3, Volume2, X
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { authContext } from "../context/authContext"
@@ -56,17 +56,69 @@ const navByRole = {
 }
 
 const roleInfo = {
-  admin: { label: "Administrator", sub: "role.admin", avatarBg: "bg-[var(--color-plum-muted)]", avatarText: "text-[var(--color-plum)]", badge: "bg-[var(--color-plum-muted)] text-[var(--color-plum)]" },
-  cashier: { label: "Cashier user", sub: "role.cashier", avatarBg: "bg-[var(--color-primary-muted)]", avatarText: "text-[var(--color-primary)]", badge: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]" },
-  kitchen: { label: "Kitchen Staff", sub: "role.kitchen", avatarBg: "bg-[var(--color-flame-muted)]", avatarText: "text-[var(--color-flame)]", badge: "bg-[var(--color-flame-muted)] text-[var(--color-flame)]" },
-  barista: { label: "Barista user", sub: "role.barista", avatarBg: "bg-[var(--color-accent-muted)]", avatarText: "text-[var(--color-warning)]", badge: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]" },
+  admin: {
+    label: "Administrator",
+    sub: "role.admin",
+    avatarBg: "bg-[var(--color-plum-muted)]",
+    avatarText: "text-[var(--color-plum)]",
+    badge: "bg-[var(--color-plum-muted)] text-[var(--color-plum)] border border-[var(--color-plum)]/20",
+  },
+  cashier: {
+    label: "Cashier Staff",
+    sub: "role.cashier",
+    avatarBg: "bg-[var(--color-primary-muted)]",
+    avatarText: "text-[var(--color-primary)]",
+    badge: "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
+  },
+  kitchen: {
+    label: "Kitchen Staff",
+    sub: "role.kitchen",
+    avatarBg: "bg-[var(--color-flame-muted)]",
+    avatarText: "text-[var(--color-flame)]",
+    badge: "bg-[var(--color-flame-muted)] text-[var(--color-flame)] border border-[var(--color-flame)]/20",
+  },
+  barista: {
+    label: "Barista Staff",
+    sub: "role.barista",
+    avatarBg: "bg-[var(--color-accent-muted)]",
+    avatarText: "text-[var(--color-warning)]",
+    badge: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20",
+  },
 }
 
 const exactEnds = ["/admin", "/cashier/menu", "/kitchen/menu", "/barista/menu"]
 
+function LiveClock({ lang }) {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const timeStr = now.toLocaleTimeString(lang === "km" ? "km-KH" : [], {
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+  const dateStr = now.toLocaleDateString(lang === "km" ? "km-KH" : "en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  })
+
+  return (
+    <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+      <Clock size={13} className="text-[var(--color-primary)] shrink-0" />
+      <span className="font-semibold text-[var(--color-text)]">{timeStr}</span>
+      <span className="text-[var(--color-muted)]">·</span>
+      <span className="text-[var(--color-muted)]">{dateStr}</span>
+    </div>
+  )
+}
+
 export default function Layout({ children }) {
   const { theme, setTheme } = useTheme()
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const { user, logout } = authContext()
   const location = useLocation()
   const navigate = useNavigate()
@@ -75,20 +127,13 @@ export default function Layout({ children }) {
   const info = roleInfo[role] || roleInfo.admin
   const nav = navByRole[role] || navByRole.admin
 
-  
   const displayName = user?.fullName || user?.name || user?.username || info.label
-  
   const initials = displayName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  // Notifications: mounted here (above every page) so the bell, its
-  // count, and the alert sound work regardless of which page is active —
-  // this used to live inside CashierOrders.jsx alone, which meant
-  // navigating to /cashier/menu made notifications invisible and silent.
   const { count: bellCount, bellRinging } = useStaffNotifications(role)
 
-  // Where clicking the bell should take you per role
   const bellDestination = {
     admin: "/admin",
     cashier: "/cashier/orders",
@@ -103,8 +148,6 @@ export default function Layout({ children }) {
 
   useEffect(() => {
     if (!needsSoundPrompt || soundUnlocked) return
-    
-    
     const check = () => { if (isAudioUnlocked()) setSoundUnlocked(true) }
     window.addEventListener("click", check)
     window.addEventListener("touchstart", check)
@@ -119,206 +162,257 @@ export default function Layout({ children }) {
     setSoundUnlocked(true)
   }
 
-  
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
 
   const handleLogout = async () => {
     await logout()
-    navigate("/login", { replace: true })
   }
+
+  // Resolve active nav item for top header breadcrumb title
+  const allNavItems = [...(nav.main || []), ...(nav.secondary || [])]
+  const activeNav =
+    allNavItems.find((item) =>
+      exactEnds.includes(item.to)
+        ? location.pathname === item.to
+        : location.pathname === item.to || location.pathname.startsWith(item.to + "/")
+    ) || allNavItems[0]
+  const ActiveIcon = activeNav?.icon || LayoutDashboard
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[var(--color-background)]">
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-40 w-56 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col transition-transform duration-300",
+        "fixed inset-y-0 left-0 z-40 w-64 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col transition-transform duration-300 ease-in-out shadow-xl lg:shadow-none",
         "lg:static lg:translate-x-0",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
 
-        {/* Brand */}
-        <div className="px-4 pt-5 pb-4 shrink-0">
-          <div className="border-2 border-[var(--color-primary)] rounded-xl p-3 text-center">
-            <div className="font-display font-bold text-xl text-[var(--color-primary)] leading-tight">ZOOM</div>
-            <div className="text-[10px] text-[var(--color-text-secondary)] font-medium">Garden Cafe & Wine</div>
-            <div className="text-[9px] text-[var(--color-muted)]">Sen Sok</div>
+        {/* Brand Header */}
+        <div className="h-16 px-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl shadow-xs shrink-0 overflow-hidden">
+              <svg viewBox="0 0 120 120" fill="none" className="w-full h-full">
+                <defs>
+                  <linearGradient id="zoomSidebarGrad" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#059669" />
+                    <stop offset="100%" stopColor="#047857" />
+                  </linearGradient>
+                </defs>
+                <rect width="120" height="120" rx="26" fill="url(#zoomSidebarGrad)" />
+                <rect x="7" y="7" width="106" height="106" rx="20" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="2" />
+                <path d="M78 24C90 22 98 30 96 42C85 44 77 36 78 24Z" fill="#fbbf24" />
+                <path
+                  d="M32 36H84L44 84H88"
+                  stroke="#ffffff"
+                  strokeWidth="13"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle cx="88" cy="84" r="6.5" fill="#fbbf24" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-display font-black text-lg tracking-wider text-[var(--color-primary)] leading-none">
+                  ZOOM
+                </span>
+                <span className={cn("text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md", info.badge)}>
+                  {t(info.sub)}
+                </span>
+              </div>
+              <div className="text-[11px] font-medium text-[var(--color-text-secondary)] truncate mt-1">
+                Garden Café &amp; Wine · Sen Sok
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Role badge */}
-        <div className="px-4 pb-3">
-          <div className={cn("inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full w-full justify-center", info.badge)}>
-            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
-            {t(info.sub)}
-          </div>
-        </div>
-
-        {/* Mobile Language Switcher */}
-        <div className="px-4 pb-2 lg:hidden">
-          <LanguageSwitcher langs={["en", "km"]} className="w-full justify-center" />
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden p-1.5 rounded-lg text-[var(--color-muted)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-text)] transition-colors"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 space-y-0.5 py-1">
-          {nav.main.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exactEnds.includes(to)}
-              className={({ isActive }) => cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
-                isActive
-                  ? "bg-[var(--color-primary)] text-white shadow-sm"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
-              )}
-            >
-              <Icon size={17} className="shrink-0" />
-              <span className="truncate">{t(label)}</span>
-            </NavLink>
-          ))}
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          <div className="space-y-1">
+            <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+              {t(info.sub)} Workspace
+            </div>
+            {nav.main.map(({ to, icon: Icon, label }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={exactEnds.includes(to)}
+                className={({ isActive }) => cn(
+                  "group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+                  isActive
+                    ? "bg-[var(--color-primary)] text-white shadow-sm shadow-[var(--color-primary)]/20"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+                )}
+              >
+                <Icon size={17} className="shrink-0 transition-transform duration-150 group-hover:scale-105" />
+                <span className="truncate">{t(label)}</span>
+              </NavLink>
+            ))}
+          </div>
 
           {nav.secondary?.length > 0 && (
-            <>
-              <div className="h-px bg-[var(--color-border)] my-2" />
+            <div className="space-y-1 pt-2 border-t border-[var(--color-border)]">
+              <div className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                Management
+              </div>
               {nav.secondary.map(({ to, icon: Icon, label }) => (
                 <NavLink
                   key={to}
                   to={to}
                   className={({ isActive }) => cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+                    "group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
                     isActive
-                      ? "bg-[var(--color-primary)] text-white shadow-sm"
+                      ? "bg-[var(--color-primary)] text-white shadow-sm shadow-[var(--color-primary)]/20"
                       : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
                   )}
                 >
-                  <Icon size={17} className="shrink-0" />
+                  <Icon size={17} className="shrink-0 transition-transform duration-150 group-hover:scale-105" />
                   <span className="truncate">{t(label)}</span>
                 </NavLink>
               ))}
-            </>
+            </div>
           )}
         </nav>
 
-        {}
-        <div className="px-3 pb-4 pt-2 border-t border-[var(--color-border)] shrink-0">
-          <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-[var(--color-primary-muted)] transition-colors">
-            <div className={cn("w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0", info.avatarBg, info.avatarText)}>
+        {/* Sidebar Footer User Card */}
+        <div className="p-3 border-t border-[var(--color-border)] bg-[var(--color-background)]/40 shrink-0">
+          <div className="flex items-center gap-2.5 p-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xs">
+            <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0", info.avatarBg, info.avatarText)}>
               {initials}
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-[var(--color-text)] truncate">{displayName}</div>
-              <div className="text-[10px] text-[var(--color-muted)]">{t(info.sub)}</div>
+              <div className="text-[10px] text-[var(--color-muted)] truncate">{user?.email || t(info.sub)}</div>
             </div>
+            <button
+              onClick={handleLogout}
+              title={t("common.logout")}
+              className="p-2 rounded-lg text-[var(--color-muted)] hover:bg-[var(--color-danger-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer shrink-0"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-danger-muted)] hover:border-[var(--color-danger)]/25 hover:text-[var(--color-danger)] transition-all"
-          >
-            <LogOut size={13} /> {t("common.logout")}
-          </button>
         </div>
       </aside>
 
-      {}
+      {/* Mobile Backdrop */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-xs lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
-      {}
+      {/* Main Content Area */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
-        {}
-        <header className="h-14 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center px-4 gap-3">
-          {}
-          <button
-            onClick={() => setSidebarOpen(v => !v)}
-            className="lg:hidden p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)]"
-          >
-            <MenuIcon size={18} />
-          </button>
-
-          {}
-          <div className="border border-[var(--color-primary)]/40 rounded-lg px-2 py-1 hidden sm:block">
-            <span className="font-display font-bold text-sm text-[var(--color-primary)]">ZOOM</span>
-            <span className="text-[9px] text-[var(--color-muted)] ml-1">Garden Cafe & Wine</span>
-          </div>
-
-          <div className="flex items-center gap-2 ml-auto">
-            {}
-            <LanguageSwitcher langs={["en", "km"]} className="hidden sm:flex" />
-
-            {}
+        {/* Top Header */}
+        <header className="h-16 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur-md flex items-center justify-between px-4 lg:px-6 gap-3">
+          {/* Left: Hamburger + Active Module Breadcrumb */}
+          <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => navigate(bellDestination[role] || "/admin")}
-              title={bellCount > 0 ? `${bellCount} order(s) need attention` : "No pending notifications"}
-              className={cn(
-                "relative p-2 rounded-xl border transition-all",
-                bellRinging ? "border-[var(--color-warning)]/45 bg-[var(--color-accent-muted)]" : "border-transparent hover:bg-[var(--color-primary-muted)]"
-              )}
+              onClick={() => setSidebarOpen(v => !v)}
+              className="lg:hidden p-2 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] transition-colors"
             >
-              <Bell size={16} className={cn(bellRinging && "animate-bounce", bellCount > 0 ? "text-[var(--color-warning)]" : "text-[var(--color-text-secondary)]")} />
-              {bellCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-danger)] text-white text-[9px] font-bold flex items-center justify-center">
-                  {bellCount}
-                </span>
-              )}
+              <MenuIcon size={18} />
             </button>
 
-            {/* Test sound button */}
-            <button
-              onClick={unlockAudioNow}
-              title="Test notification alert sound"
-              className="p-2 rounded-xl hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
-            >
-              <Volume2 size={16} />
-            </button>
-
-            {/* Dark / Light toggle */}
-            <button
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="p-2 rounded-xl hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] transition-colors"
-            >
-              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-
-            {}
-            <div className="flex items-center gap-2 border-l border-[var(--color-border)] pl-3">
-              <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0", info.avatarBg, info.avatarText)}>
-                {initials}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] flex items-center justify-center text-[var(--color-primary)] shrink-0">
+                <ActiveIcon size={16} />
               </div>
-              <div className="hidden sm:block">
-                <div className="text-xs font-semibold text-[var(--color-text)] leading-none">{displayName}</div>
-                <div className="text-[10px] text-[var(--color-muted)] mt-0.5">{t(info.sub)}</div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[var(--color-text)] truncate leading-tight">
+                  {activeNav ? t(activeNav.label) : "ZOOM RMS"}
+                </div>
+                <div className="text-[10px] text-[var(--color-muted)] hidden sm:block truncate">
+                  Zoom Garden Café &amp; Wine · {t(info.sub)}
+                </div>
               </div>
             </div>
+          </div>
 
-            {}
+          {/* Right: Clock, Language, Notifications, Sound, Theme, Logout */}
+          <div className="flex items-center gap-2">
+            <LiveClock lang={lang} />
+
+            <LanguageSwitcher langs={["en", "km"]} />
+
+            {/* Action Icon Group */}
+            <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/50 p-0.5">
+              {/* Notification Bell */}
+              <button
+                onClick={() => navigate(bellDestination[role] || "/admin")}
+                title={bellCount > 0 ? `${bellCount} order(s) need attention` : "No pending notifications"}
+                className={cn(
+                  "relative p-2 rounded-lg transition-all cursor-pointer",
+                  bellRinging
+                    ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                    : "hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                )}
+              >
+                <Bell size={15} className={cn(bellRinging && "animate-bounce", bellCount > 0 && "text-[var(--color-warning)]")} />
+                {bellCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-danger)] text-white text-[9px] font-bold flex items-center justify-center shadow-xs">
+                    {bellCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Test Sound Button */}
+              <button
+                onClick={unlockAudioNow}
+                title="Test notification alert sound"
+                className="p-2 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+              >
+                <Volume2 size={15} />
+              </button>
+
+              {/* Dark / Light Theme Toggle */}
+              <button
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                title="Toggle theme"
+                className="p-2 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+              >
+                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
+            </div>
+
+            {/* Quick Logout Button on Desktop */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 bg-[var(--color-primary)] text-white text-xs font-medium px-3 py-2 rounded-xl hover:bg-[var(--color-primary-dark)] transition-colors"
+              className="hidden sm:inline-flex items-center gap-1.5 bg-[var(--color-primary)] text-white text-xs font-semibold px-3.5 py-2 rounded-xl hover:bg-[var(--color-primary-dark)] shadow-xs transition-all cursor-pointer"
             >
               <LogOut size={13} />
-              <span className="hidden sm:inline">{t("common.logout")}</span>
+              <span>{t("common.logout")}</span>
             </button>
           </div>
         </header>
 
-        {}
+        {/* Sound Prompt Banner */}
         {needsSoundPrompt && !soundUnlocked && (
           <button
             onClick={handleEnableSound}
-            className="w-full flex items-center justify-center gap-2 bg-[var(--color-accent-muted)] hover:bg-[var(--color-accent-muted)] text-[var(--color-warning)] text-xs font-semibold py-2 px-4 transition-colors"
+            className="w-full flex items-center justify-center gap-2 bg-[var(--color-accent-muted)] text-[var(--color-warning)] text-xs font-semibold py-2 px-4 border-b border-[var(--color-warning)]/20 transition-colors cursor-pointer"
           >
             <Bell size={13} /> Tap to enable order alert sounds
           </button>
         )}
 
-        {}
+        {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {children}
         </main>
       </div>
     </div>
   )
-}
+} 

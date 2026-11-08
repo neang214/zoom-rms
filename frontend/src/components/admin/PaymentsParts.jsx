@@ -18,7 +18,6 @@ export const periods = ["Daily", "Yesterday", "Weekly", "Monthly", "Custom"]
 export const orderTotal = (order) =>
   order?.order_items?.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0) || 0
 
-// Local-time YYYY-MM-DD (toISOString would shift the day for UTC+7).
 export function toLocalDateStr(date = new Date()) {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, "0")
@@ -67,6 +66,16 @@ export function filterOrdersByRange(orders = [], fromStr, toStr) {
   })
 }
 
+export function filterPaymentsByRange(payments = [], fromStr, toStr) {
+  const start = new Date(`${fromStr}T00:00:00`)
+  const end = new Date(`${toStr}T23:59:59.999`)
+  return payments.filter((p) => {
+    if (!p.payment_date) return false
+    const d = new Date(p.payment_date)
+    return d >= start && d <= end
+  })
+}
+
 function exportOrdersCsv(orders, periodLabel) {
   const headers = ["Order ID", "Table", "Date", "Status", "Payment Method", "Items Count", "Total (USD)", "Total (KHR)"]
   const rows = orders.map((o) => {
@@ -89,7 +98,6 @@ function exportOrdersCsv(orders, periodLabel) {
     .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\n")
 
-  // BOM so Excel opens UTF-8 (Khmer / ៛) correctly
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
@@ -125,21 +133,7 @@ function exportOrdersExcel({ orders, periodLabel, totalRevenue, paidOrdersCount,
 
   const html = `
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta charset="UTF-8" />
-        <!--[if gte mso 9]>
-        <xml>
-          <x:ExcelWorkbook>
-            <x:ExcelWorksheets>
-              <x:ExcelWorksheet>
-                <x:Name>Sales Report</x:Name>
-                <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
-              </x:ExcelWorksheet>
-            </x:ExcelWorksheets>
-          </x:ExcelWorkbook>
-        </xml>
-        <![endif]-->
-      </head>
+      <head><meta charset="UTF-8" /></head>
       <body style="font-family: 'Kantumruy Pro', 'Khmer OS Siemreap', Arial, sans-serif;">
         <table>
           <tr>
@@ -174,9 +168,7 @@ function exportOrdersExcel({ orders, periodLabel, totalRevenue, paidOrdersCount,
               <th style="border:1px solid #047857; padding:8px;">Total (KHR)</th>
             </tr>
           </thead>
-          <tbody>
-            ${rowsHtml}
-          </tbody>
+          <tbody>${rowsHtml}</tbody>
           <tfoot>
             <tr style="background-color:#ecfdf5; font-weight:bold;">
               <td colspan="5" style="border:1px solid #059669; padding:8px; text-align:right;">GRAND TOTAL (${orders.length} Orders):</td>
@@ -199,7 +191,7 @@ function exportOrdersExcel({ orders, periodLabel, totalRevenue, paidOrdersCount,
   URL.revokeObjectURL(url)
 }
 
-function exportPaymentsExcel(payments = []) {
+function exportPaymentsExcel(payments = [], periodLabel = "All") {
   const rowsHtml = payments.map((p, idx) => {
     const amt = Number(p.amount || 0)
     const ordId = p.order_id || p.order?.order_id
@@ -232,7 +224,7 @@ function exportPaymentsExcel(payments = []) {
         <table>
           <tr>
             <td colspan="10" style="font-size:18px; font-weight:bold; color:#059669; padding:10px 0;">
-              ZOOM GARDEN CAFÉ &amp; WINE — PAYMENTS AUDIT LOG
+              ZOOM GARDEN CAFÉ &amp; WINE — PAYMENTS LOG (${periodLabel})
             </td>
           </tr>
           <thead>
@@ -252,7 +244,7 @@ function exportPaymentsExcel(payments = []) {
           <tbody>${rowsHtml}</tbody>
           <tfoot>
             <tr style="background-color:#ecfdf5; font-weight:bold;">
-              <td colspan="8" style="border:1px solid #059669; padding:8px; text-align:right;">TOTAL COMPLETED (${payments.length} Records):</td>
+              <td colspan="8" style="border:1px solid #059669; padding:8px; text-align:right;">TOTAL COMPLETED (${payments.length} Payments):</td>
               <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">$${grandTotalUSD.toFixed(2)}</td>
               <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">៛${grandTotalKHR.toLocaleString()}</td>
             </tr>
@@ -266,7 +258,7 @@ function exportPaymentsExcel(payments = []) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url
-  link.download = `zoom-payments-${toLocalDateStr()}.xls`
+  link.download = `zoom-payments-${periodLabel.replace(/[^a-z0-9_-]/gi, "_").toLowerCase()}.xls`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -333,10 +325,31 @@ export function PaymentStats({ orders = [], todaysPayments = [], todaysRevenue =
 
 export function PaymentsTable({ payments = [], orders = [], isLoading = false }) {
   const { t } = useLang()
-  const [search, setSearch] = useState("")
+  const todayStr = toLocalDateStr()
+
+  const [activePeriod, setActivePeriod] = useState("Daily") // "All" | "Daily" | "Yesterday" | "Weekly" | "Monthly" | "Custom"
+  const [customFrom, setCustomFrom] = useState(todayStr)
+  const [customTo, setCustomTo] = useState(todayStr)
   const [methodFilter, setMethodFilter] = useState("All")
-  const [dateFilter, setDateFilter] = useState("All") // "All" | "Today" | "Yesterday"
+  const [search, setSearch] = useState("")
   const [viewOrder, setViewOrder] = useState(null)
+
+  const periodOptions = ["All", "Daily", "Yesterday", "Weekly", "Monthly", "Custom"]
+  const periodLabelKey = {
+    All: "common.all",
+    Daily: "reports.daily",
+    Yesterday: "reports.yesterday",
+    Weekly: "reports.weekly",
+    Monthly: "reports.monthly",
+    Custom: "reports.custom",
+  }
+
+  const range = useMemo(() => {
+    if (activePeriod === "All") {
+      return { from: null, to: null, label: "All Time" }
+    }
+    return getDateRangeForPeriod(activePeriod, customFrom, customTo)
+  }, [activePeriod, customFrom, customTo])
 
   const methodNames = useMemo(() => {
     const set = new Set(payments.map((p) => p.method?.method_name).filter(Boolean))
@@ -359,25 +372,17 @@ export function PaymentsTable({ payments = [], orders = [], isLoading = false })
     return null
   }
 
+  const rangedPayments = useMemo(() => {
+    if (activePeriod === "All" || !range.from || !range.to) return payments
+    return filterPaymentsByRange(payments, range.from, range.to)
+  }, [payments, activePeriod, range.from, range.to])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const now = new Date()
-    const todayStr = now.toDateString()
-    const yest = new Date(now)
-    yest.setDate(now.getDate() - 1)
-    const yestStr = yest.toDateString()
-
-    return payments.filter((p) => {
-      if (dateFilter === "Today") {
-        if (!p.payment_date || new Date(p.payment_date).toDateString() !== todayStr) return false
-      } else if (dateFilter === "Yesterday") {
-        if (!p.payment_date || new Date(p.payment_date).toDateString() !== yestStr) return false
-      }
-
+    return rangedPayments.filter((p) => {
       if (methodFilter !== "All" && p.method?.method_name !== methodFilter) {
         return false
       }
-
       if (!q) return true
 
       const payId = String(p.payment_id)
@@ -399,7 +404,7 @@ export function PaymentsTable({ payments = [], orders = [], isLoading = false })
         ref.includes(q)
       )
     })
-  }, [payments, search, methodFilter, dateFilter])
+  }, [rangedPayments, search, methodFilter])
 
   const filteredTotal = useMemo(
     () => filtered.filter((p) => p.status === "Completed").reduce((s, p) => s + Number(p.amount || 0), 0),
@@ -407,48 +412,126 @@ export function PaymentsTable({ payments = [], orders = [], isLoading = false })
   )
 
   return (
-    <Card>
-      <div className="p-5 pb-4 border-b border-[var(--color-border)] flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold text-[var(--color-primary)]">
-              {t("payments.history")} ({filtered.length})
+    <div className="space-y-4">
+      {/* Period Selector Card (Matches Reports Page) */}
+      <Card className="p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] flex items-center justify-center">
+              <Receipt size={16} className="text-[var(--color-primary)]" />
             </div>
-            <div className="text-xs text-[var(--color-muted)] mt-0.5">
-              {t("common.total")}:{" "}
-              <span className="font-bold text-[var(--color-primary)]">${filteredTotal.toFixed(2)}</span>{" "}
-              (៛{Math.round(filteredTotal * KHR_RATE).toLocaleString()})
+            <div>
+              <div className="font-semibold text-[var(--color-text)] text-base">{t("payments.history")}</div>
+              <div className="text-xs text-[var(--color-muted)]">{range.label}</div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative w-full sm:w-64">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t("payments.searchPlaceholder")}
-                className="pl-9 h-9 text-xs"
-              />
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 h-9"
-              disabled={filtered.length === 0}
-              onClick={() => exportPaymentsExcel(filtered)}
-            >
-              <FileSpreadsheet size={14} /> Export Excel
-            </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {periodOptions.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setActivePeriod(p)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer",
+                  activePeriod === p
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-sm"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                )}
+              >
+                {p === "Custom" ? <Calendar size={13} /> : <TrendingUp size={13} />}
+                {periodLabelKey[p] ? t(periodLabelKey[p]) : p}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Filter Pills: Payment Method & Date */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        {activePeriod === "Custom" && (
+          <div className="mt-4 pt-4 border-t border-[var(--color-border)] flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-xl px-3 py-2">
+              <Calendar size={14} className="text-[var(--color-primary)] shrink-0" />
+              <span className="text-xs font-medium text-[var(--color-muted)]">{t("reports.from")}</span>
+              <input
+                type="date"
+                value={customFrom}
+                max={customTo || todayStr}
+                onChange={(e) => e.target.value && setCustomFrom(e.target.value)}
+                className="text-xs font-semibold text-[var(--color-text)] bg-transparent outline-none cursor-pointer"
+              />
+            </div>
+
+            <ArrowRight size={14} className="text-[var(--color-muted)] hidden sm:block" />
+
+            <div className="flex items-center gap-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-xl px-3 py-2">
+              <Calendar size={14} className="text-[var(--color-primary)] shrink-0" />
+              <span className="text-xs font-medium text-[var(--color-muted)]">{t("reports.to")}</span>
+              <input
+                type="date"
+                value={customTo}
+                min={customFrom}
+                max={todayStr}
+                onChange={(e) => e.target.value && setCustomTo(e.target.value)}
+                className="text-xs font-semibold text-[var(--color-text)] bg-transparent outline-none cursor-pointer"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCustomFrom(todayStr)
+                setCustomTo(todayStr)
+              }}
+              className="text-xs font-medium text-[var(--color-primary)] hover:underline px-2 py-1"
+            >
+              {t("reports.resetToday")}
+            </button>
+          </div>
+        )}
+      </Card>
+
+      {/* Payments Table Card */}
+      <Card>
+        <div className="p-5 pb-4 border-b border-[var(--color-border)] flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold text-[var(--color-primary)]">
+                {t("payments.history")} ({filtered.length})
+              </div>
+              <div className="text-xs text-[var(--color-muted)] mt-0.5">
+                {t("common.total")}:{" "}
+                <span className="font-bold text-[var(--color-primary)]">${filteredTotal.toFixed(2)}</span>{" "}
+                (៛{Math.round(filteredTotal * KHR_RATE).toLocaleString()})
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative w-full sm:w-64">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t("payments.searchPlaceholder")}
+                  className="pl-9 h-9 text-xs"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 h-9"
+                disabled={filtered.length === 0}
+                onClick={() => exportPaymentsExcel(filtered, range.label)}
+              >
+                <FileSpreadsheet size={14} /> Export Excel
+              </Button>
+            </div>
+          </div>
+
+          {/* Payment Method Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-1">
             {methodNames.map((m) => (
               <button
                 key={m}
+                type="button"
                 onClick={() => setMethodFilter(m)}
                 className={cn(
                   "px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer",
@@ -461,133 +544,112 @@ export function PaymentsTable({ payments = [], orders = [], isLoading = false })
               </button>
             ))}
           </div>
-
-          <div className="flex items-center gap-1.5">
-            {[
-              { key: "All", label: t("common.all") },
-              { key: "Today", label: t("reports.daily") },
-              { key: "Yesterday", label: t("reports.yesterday") },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setDateFilter(key)}
-                className={cn(
-                  "px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer",
-                  dateFilter === key
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
-                    : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)]"
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
-      </div>
 
-      <div className="p-2">
-        {isLoading ? (
-          <div className="text-center text-sm text-[var(--color-muted)] py-10">{t("common.loading")}</div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent border-none">
-                <TableHead>#</TableHead>
-                <TableHead>{t("report.orderNum")}</TableHead>
-                <TableHead>{t("common.table")}</TableHead>
-                <TableHead>{t("pay.method")}</TableHead>
-                <TableHead>{t("payments.cashier")}</TableHead>
-                <TableHead>{t("payments.dateTime")}</TableHead>
-                <TableHead>{t("common.status")}</TableHead>
-                <TableHead className="text-right">{t("payments.amount")}</TableHead>
-                <TableHead className="text-right">{t("common.actions")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((p) => {
-                const amt = Number(p.amount || 0)
-                const ordId = p.order_id || p.order?.order_id
-                const linkedOrder = resolveOrder(p)
-                return (
-                  <TableRow key={p.payment_id}>
-                    <TableCell className="text-[var(--color-muted)] text-xs">
-                      PAY-{String(p.payment_id).padStart(4, "0")}
-                    </TableCell>
-                    <TableCell className="font-semibold">
-                      {ordId ? `ORD-${String(ordId).padStart(4, "0")}` : "—"}
-                    </TableCell>
-                    <TableCell className="text-[var(--color-muted)]">
-                      {linkedOrder?.table?.table_number || p.order?.table?.table_number || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-xs font-medium text-[var(--color-text-secondary)]">
-                        {p.method?.method_name || "—"}
-                      </div>
-                      {p.external_ref && (
-                        <div
-                          className="text-[10px] font-mono text-[var(--color-muted)]"
-                          title={`Bakong MD5: ${p.external_ref}`}
-                        >
-                          MD5: {p.external_ref.slice(0, 10)}...
+        <div className="p-2">
+          {isLoading ? (
+            <div className="text-center text-sm text-[var(--color-muted)] py-10">{t("common.loading")}</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent border-none">
+                  <TableHead>#</TableHead>
+                  <TableHead>{t("report.orderNum")}</TableHead>
+                  <TableHead>{t("common.table")}</TableHead>
+                  <TableHead>{t("pay.method")}</TableHead>
+                  <TableHead>{t("payments.cashier")}</TableHead>
+                  <TableHead>{t("payments.dateTime")}</TableHead>
+                  <TableHead>{t("common.status")}</TableHead>
+                  <TableHead className="text-right">{t("payments.amount")}</TableHead>
+                  <TableHead className="text-right">{t("common.actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((p) => {
+                  const amt = Number(p.amount || 0)
+                  const ordId = p.order_id || p.order?.order_id
+                  const linkedOrder = resolveOrder(p)
+                  return (
+                    <TableRow key={p.payment_id}>
+                      <TableCell className="text-[var(--color-muted)] text-xs">
+                        PAY-{String(p.payment_id).padStart(4, "0")}
+                      </TableCell>
+                      <TableCell className="font-semibold">
+                        {ordId ? `ORD-${String(ordId).padStart(4, "0")}` : "—"}
+                      </TableCell>
+                      <TableCell className="text-[var(--color-muted)]">
+                        {linkedOrder?.table?.table_number || p.order?.table?.table_number || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                          {p.method?.method_name || "—"}
                         </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-[var(--color-muted)]">
-                      {p.user?.username || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs text-[var(--color-muted)]">
-                      {p.payment_date ? new Date(p.payment_date).toLocaleString() : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={p.status === "Completed" ? "success" : p.status === "Failed" ? "danger" : "warning"}>
-                        {p.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="font-bold text-[var(--color-primary)]">${amt.toFixed(2)}</div>
-                      <div className="text-[10px] text-[var(--color-muted)]">
-                        ៛{Math.round(amt * KHR_RATE).toLocaleString()}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {linkedOrder?.order_items && (
-                          <>
-                            <button
-                              onClick={() => printOrderReceipt(linkedOrder)}
-                              title={t("cashier.printReceipt")}
-                              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
-                            >
-                              <Printer size={14} />
-                            </button>
-                            <button
-                              onClick={() => setViewOrder(linkedOrder)}
-                              title={t("cashier.viewDetails")}
-                              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
-                            >
-                              <Eye size={14} />
-                            </button>
-                          </>
+                        {p.external_ref && (
+                          <div
+                            className="text-[10px] font-mono text-[var(--color-muted)]"
+                            title={`Bakong MD5: ${p.external_ref}`}
+                          >
+                            MD5: {p.external_ref.slice(0, 10)}...
+                          </div>
                         )}
-                      </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-[var(--color-muted)]">
+                        {p.user?.username || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-[var(--color-muted)]">
+                        {p.payment_date ? new Date(p.payment_date).toLocaleString() : "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={p.status === "Completed" ? "success" : p.status === "Failed" ? "danger" : "warning"}>
+                          {p.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="font-bold text-[var(--color-primary)]">${amt.toFixed(2)}</div>
+                        <div className="text-[10px] text-[var(--color-muted)]">
+                          ៛{Math.round(amt * KHR_RATE).toLocaleString()}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {linkedOrder?.order_items && (
+                            <>
+                              <button
+                                onClick={() => printOrderReceipt(linkedOrder)}
+                                title={t("cashier.printReceipt")}
+                                className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                              >
+                                <Printer size={14} />
+                              </button>
+                              <button
+                                onClick={() => setViewOrder(linkedOrder)}
+                                title={t("cashier.viewDetails")}
+                                className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                              >
+                                <Eye size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+                {filtered.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center text-sm text-[var(--color-muted)] py-10">
+                      {t("payments.noPayments")}
                     </TableCell>
                   </TableRow>
-                )
-              })}
-              {filtered.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-sm text-[var(--color-muted)] py-10">
-                    {t("payments.noPayments")}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        )}
-      </div>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </div>
 
-      <ViewOrderDialog order={viewOrder} onClose={() => setViewOrder(null)} />
-    </Card>
+        <ViewOrderDialog order={viewOrder} onClose={() => setViewOrder(null)} />
+      </Card>
+    </div>
   )
 }
 
@@ -613,7 +675,6 @@ export function ReportBuilder({
   }
   const todayStr = toLocalDateStr()
 
-  // Internal fallback state when the parent doesn't control the period
   const [localPeriod, setLocalPeriod] = useState(activePeriod)
   const [localFrom, setLocalFrom] = useState(todayStr)
   const [localTo, setLocalTo] = useState(todayStr)
@@ -724,7 +785,6 @@ export function ReportBuilder({
 
   return (
     <div className="space-y-5">
-      {/* Filter & date range toolbar */}
       <Card className="p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -801,7 +861,6 @@ export function ReportBuilder({
         )}
       </Card>
 
-      {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map(({ label, value, sub, icon: Icon, tint, color, accent }) => (
           <Card key={label} className={cn("p-5", accent && "border-l-4 border-l-[var(--color-primary)]")}>
@@ -819,7 +878,6 @@ export function ReportBuilder({
         ))}
       </div>
 
-      {/* Payment methods + top items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-4">
@@ -903,7 +961,6 @@ export function ReportBuilder({
         </Card>
       </div>
 
-      {/* Order table */}
       <Card>
         <div className="p-5 border-b border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>

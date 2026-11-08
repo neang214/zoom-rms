@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useLang } from "@/i18n/LanguageContext"
-import { deleteErrorMessage, cn } from "@/lib/utils"
+import { cn, deleteErrorMessage } from "@/lib/utils"
 import { Plus, Package, Truck } from "lucide-react"
 import { Button } from "@/components/ui"
 import { useStockStore } from "../../context/stockContext"
@@ -25,7 +25,9 @@ export default function Stock() {
   const { stockOrders, fetchStockOrders, createStockOrder, updateStatus: updatePoStatus, isLoading: poLoading } = useStockOrderStore()
   const { suppliers, fetchSuppliers } = useSupplierStore()
 
-  const [activeTab, setActiveTab] = useState("inventory") // "inventory" | "orders"
+  // Tab switcher: "inventory" | "orders"
+  const [activeTab, setActiveTab] = useState("inventory")
+
   const [search, setSearch] = useState("")
   const [typeFilter, setTypeFilter] = useState("all")
   const [catFilter, setCatFilter] = useState("All categories")
@@ -75,6 +77,7 @@ export default function Stock() {
 
   const lowStockCount = (lowStock || []).length || (stockItems || []).filter(i => i.min_level != null && Number(i.quantity) < Number(i.min_level)).length
   const unitNames = [...new Set((stockItems || []).map(i => i.unit?.unit_name).filter(Boolean))]
+  const pendingPoCount = (stockOrders || []).filter(po => po.status !== "Received").length
 
   const handleImageSelect = (file) => {
     setImageFile(file)
@@ -304,7 +307,7 @@ export default function Stock() {
             </Button>
           ) : (
             <Button onClick={openNewPo} className="gap-2">
-              <Plus size={15} /> {t("stock.placeOrder")}
+              <Plus size={15} /> {t("stock.newPo")}
             </Button>
           )
         }
@@ -317,24 +320,26 @@ export default function Stock() {
         stockOrdersCount={stockOrders.length}
       />
 
-      {/* Stock Tab Bar */}
-      <div className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2">
+      {/* Tab Bar for Inventory List vs Purchase Orders (Restocking) */}
+      <div className="inline-flex items-center gap-1.5 p-1.5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xs">
         <button
           type="button"
           onClick={() => setActiveTab("inventory")}
           className={cn(
-            "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
             activeTab === "inventory"
               ? "bg-[var(--color-primary)] text-white shadow-sm"
-              : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
           )}
         >
           <Package size={15} />
           <span>{t("stock.inventoryList")}</span>
           <span
             className={cn(
-              "px-2 py-0.5 rounded-full text-[10px] font-bold",
-              activeTab === "inventory" ? "bg-white/20 text-white" : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+              "text-[11px] px-2 py-0.5 rounded-full font-bold",
+              activeTab === "inventory"
+                ? "bg-white/20 text-white"
+                : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
             )}
           >
             {stockItems.length}
@@ -345,18 +350,22 @@ export default function Stock() {
           type="button"
           onClick={() => setActiveTab("orders")}
           className={cn(
-            "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
             activeTab === "orders"
               ? "bg-[var(--color-primary)] text-white shadow-sm"
-              : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
           )}
         >
           <Truck size={15} />
-          <span>{t("stock.purchaseOrders")}</span>
+          <span>{t("stock.poTitle")}</span>
           <span
             className={cn(
-              "px-2 py-0.5 rounded-full text-[10px] font-bold",
-              activeTab === "orders" ? "bg-white/20 text-white" : "bg-[var(--color-plum-muted)] text-[var(--color-plum)]"
+              "text-[11px] px-2 py-0.5 rounded-full font-bold",
+              activeTab === "orders"
+                ? "bg-white/20 text-white"
+                : pendingPoCount > 0
+                  ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                  : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
             )}
           >
             {stockOrders.length}
@@ -366,14 +375,23 @@ export default function Stock() {
 
       {activeTab === "inventory" ? (
         <StockTable
-          items={filtered} isLoading={isLoading}
-          search={search} setSearch={setSearch}
-          typeFilter={typeFilter} setTypeFilter={setTypeFilter}
-          catFilter={catFilter} setCatFilter={setCatFilter}
-          lowOnly={lowOnly} setLowOnly={setLowOnly} lowStockCount={lowStockCount}
+          items={filtered}
+          isLoading={isLoading}
+          search={search}
+          setSearch={setSearch}
+          typeFilter={typeFilter}
+          setTypeFilter={setTypeFilter}
+          catFilter={catFilter}
+          setCatFilter={setCatFilter}
+          lowOnly={lowOnly}
+          setLowOnly={setLowOnly}
+          lowStockCount={lowStockCount}
           unitNames={unitNames}
           onAddUnit={() => { setErrorMsg(""); setAddUnitOpen(true) }}
-          onAddQty={(item) => { setErrorMsg(""); setAddQty(""); setAddQtyItem(item) }} onView={setViewItem} onEdit={openEdit} onDelete={requestDelete}
+          onAddQty={(item) => { setErrorMsg(""); setAddQty(""); setAddQtyItem(item) }}
+          onView={setViewItem}
+          onEdit={openEdit}
+          onDelete={requestDelete}
         />
       ) : (
         <StockOrdersCard

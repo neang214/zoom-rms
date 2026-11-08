@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Search, Plus, Eye, Pencil, Trash2, Package, AlertTriangle, Layers, DollarSign, ImagePlus, X, ChefHat, Coffee, Store, Truck, Check } from "lucide-react"
+import { Search, Plus, Eye, Pencil, Trash2, Package, AlertTriangle, Layers, ImagePlus, X, ChefHat, Coffee, Store, Truck, Check } from "lucide-react"
 import {
   Button, Badge, Input, Label, Card,
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
@@ -16,8 +16,8 @@ export function stockStatus(item) {
 
 export const STOCK_TYPES = {
   kitchen: { labelKey: "stock.kitchen", label: "Kitchen", icon: ChefHat, color: "bg-[var(--color-flame-muted)] text-[var(--color-flame)]" },
-  barista: { labelKey: "stock.barista", label: "Barista", icon: Coffee,  color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]" },
-  both:    { labelKey: "stock.bothShared", label: "Both", icon: Store,   color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]" },
+  barista: { labelKey: "stock.barista", label: "Barista", icon: Coffee, color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]" },
+  both: { labelKey: "stock.bothShared", label: "Both", icon: Store, color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]" },
 }
 
 export function StockTypeBadge({ type }) {
@@ -206,7 +206,7 @@ export function StockTable({
             type="button"
             onClick={() => setLowOnly(!lowOnly)}
             className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all",
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer",
               lowOnly
                 ? "bg-[var(--color-danger)] text-white border-[var(--color-danger)]"
                 : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-warning)]"
@@ -215,7 +215,9 @@ export function StockTable({
             <AlertTriangle size={13} />
             {t("stock.lowStockOnly")} ({lowStockCount})
           </button>
-          <Button variant="dark" size="sm" onClick={onAddUnit} className="gap-1.5"><Layers size={13} /> {t("stock.manageUnits")}</Button>
+          <Button variant="outline" size="sm" onClick={onAddUnit} className="gap-1.5">
+            <Layers size={13} /> {t("stock.manageUnits")}
+          </Button>
         </div>
       </div>
       <div className="p-4 flex gap-3 flex-wrap">
