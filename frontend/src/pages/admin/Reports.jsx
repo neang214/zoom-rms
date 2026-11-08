@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useOrderStore } from "../../context/orderContext"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import { ReportBuilder, toLocalDateStr } from "@/components/admin/PaymentsParts"
 import { useLang } from "@/i18n/LanguageContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
 
 export default function Reports() {
   const { t } = useLang()
@@ -14,9 +15,18 @@ export default function Reports() {
   const [customFrom, setCustomFrom] = useState(todayStr)
   const [customTo, setCustomTo] = useState(todayStr)
 
-  useEffect(() => {
-    fetchOrders().catch(() => {})
+  const refresh = useCallback(() => {
+    fetchOrders().catch(() => { })
   }, [fetchOrders])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  useSocketRole("admin")
+  useSocketEvent("payment:completed", refresh)
+  useSocketEvent("order:new", refresh)
+  useSocketEvent("order:status_changed", refresh)
 
   return (
     <div className="space-y-5">
@@ -39,4 +49,4 @@ export default function Reports() {
       />
     </div>
   )
-}
+} 

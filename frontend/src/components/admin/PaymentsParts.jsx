@@ -1,13 +1,14 @@
 import { useState, useMemo } from "react"
 import {
   ShoppingCart, TrendingUp, Receipt, Printer, DollarSign, Calendar, Download,
-  CreditCard, Flame, CheckCircle2, Search, ArrowRight, BarChart3,
+  CreditCard, Flame, CheckCircle2, Search, ArrowRight, BarChart3, Eye, FileSpreadsheet,
 } from "lucide-react"
 import {
   Button, Card, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Badge, Input,
 } from "@/components/ui"
 import { cn, menuItemName } from "@/lib/utils"
-import { printExecutiveReport } from "@/components/cashier/orderHelpers"
+import { printExecutiveReport, printOrderReceipt } from "@/components/cashier/orderHelpers"
+import ViewOrderDialog from "@/components/cashier/ViewOrderDialog"
 import { useLang } from "@/i18n/LanguageContext"
 
 const KHR_RATE = 4100
@@ -15,7 +16,7 @@ const KHR_RATE = 4100
 export const periods = ["Daily", "Yesterday", "Weekly", "Monthly", "Custom"]
 
 export const orderTotal = (order) =>
-  order.order_items?.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0) || 0
+  order?.order_items?.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0) || 0
 
 // Local-time YYYY-MM-DD (toISOString would shift the day for UTC+7).
 export function toLocalDateStr(date = new Date()) {
@@ -89,7 +90,7 @@ function exportOrdersCsv(orders, periodLabel) {
     .join("\n")
 
   // BOM so Excel opens UTF-8 (Khmer / ៛) correctly
-  const blob = new Blob(["﻿" + csvContent], { type: "text/csv;charset=utf-8;" })
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url
@@ -98,8 +99,187 @@ function exportOrdersCsv(orders, periodLabel) {
   URL.revokeObjectURL(url)
 }
 
-export function PaymentStats({ orders, todaysPayments, todaysRevenue }) {
+function exportOrdersExcel({ orders, periodLabel, totalRevenue, paidOrdersCount, avgOrderValue }) {
+  const rowsHtml = orders.map((o, idx) => {
+    const total = orderTotal(o)
+    const itemCount = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
+    const method = o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
+    const bg = idx % 2 === 0 ? "#ffffff" : "#f8fafc"
+    return `
+      <tr style="background-color:${bg};">
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">ORD-${String(o.order_id).padStart(4, "0")}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${o.table?.table_number || "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${new Date(o.order_date).toLocaleString()}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${o.status}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${method}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${itemCount}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:right; font-weight:bold; color:#059669;">$${total.toFixed(2)}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:right;">៛${Math.round(total * KHR_RATE).toLocaleString()}</td>
+      </tr>
+    `
+  }).join("")
+
+  const totalItems = orders.reduce((sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0), 0)
+  const grandTotalUSD = orders.reduce((sum, o) => sum + orderTotal(o), 0)
+  const grandTotalKHR = Math.round(grandTotalUSD * KHR_RATE)
+
+  const html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8" />
+        <!--[if gte mso 9]>
+        <xml>
+          <x:ExcelWorkbook>
+            <x:ExcelWorksheets>
+              <x:ExcelWorksheet>
+                <x:Name>Sales Report</x:Name>
+                <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+              </x:ExcelWorksheet>
+            </x:ExcelWorksheets>
+          </x:ExcelWorkbook>
+        </xml>
+        <![endif]-->
+      </head>
+      <body style="font-family: 'Kantumruy Pro', 'Khmer OS Siemreap', Arial, sans-serif;">
+        <table>
+          <tr>
+            <td colspan="8" style="font-size:18px; font-weight:bold; color:#059669; padding:10px 0;">
+              ZOOM GARDEN CAFÉ &amp; WINE — SALES REPORT (${periodLabel})
+            </td>
+          </tr>
+          <tr>
+            <td colspan="2" style="background:#ecfdf5; border:1px solid #059669; padding:8px; font-weight:bold;">
+              Paid Revenue: $${totalRevenue.toFixed(2)} (៛${Math.round(totalRevenue * KHR_RATE).toLocaleString()})
+            </td>
+            <td colspan="2" style="background:#f8fafc; border:1px solid #cbd5e1; padding:8px; font-weight:bold;">
+              Paid Orders: ${paidOrdersCount} / ${orders.length}
+            </td>
+            <td colspan="2" style="background:#f8fafc; border:1px solid #cbd5e1; padding:8px; font-weight:bold;">
+              Avg Ticket: $${avgOrderValue.toFixed(2)}
+            </td>
+            <td colspan="2" style="background:#f8fafc; border:1px solid #cbd5e1; padding:8px; font-weight:bold;">
+              Exported: ${new Date().toLocaleString()}
+            </td>
+          </tr>
+          <tr><td colspan="8"></td></tr>
+          <thead>
+            <tr style="background-color:#059669; color:#ffffff; font-weight:bold;">
+              <th style="border:1px solid #047857; padding:8px;">Order ID</th>
+              <th style="border:1px solid #047857; padding:8px;">Table</th>
+              <th style="border:1px solid #047857; padding:8px;">Date &amp; Time</th>
+              <th style="border:1px solid #047857; padding:8px;">Status</th>
+              <th style="border:1px solid #047857; padding:8px;">Payment Method</th>
+              <th style="border:1px solid #047857; padding:8px;">Items</th>
+              <th style="border:1px solid #047857; padding:8px;">Total (USD)</th>
+              <th style="border:1px solid #047857; padding:8px;">Total (KHR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+          <tfoot>
+            <tr style="background-color:#ecfdf5; font-weight:bold;">
+              <td colspan="5" style="border:1px solid #059669; padding:8px; text-align:right;">GRAND TOTAL (${orders.length} Orders):</td>
+              <td style="border:1px solid #059669; padding:8px; text-align:center;">${totalItems}</td>
+              <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">$${grandTotalUSD.toFixed(2)}</td>
+              <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">៛${grandTotalKHR.toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </body>
+    </html>
+  `
+
+  const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8;" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = `zoom-report-${periodLabel.replace(/[^a-z0-9_-]/gi, "_").toLowerCase()}.xls`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportPaymentsExcel(payments = []) {
+  const rowsHtml = payments.map((p, idx) => {
+    const amt = Number(p.amount || 0)
+    const ordId = p.order_id || p.order?.order_id
+    const bg = idx % 2 === 0 ? "#ffffff" : "#f8fafc"
+    return `
+      <tr style="background-color:${bg};">
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">PAY-${String(p.payment_id).padStart(4, "0")}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${ordId ? `ORD-${String(ordId).padStart(4, "0")}` : "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${p.order?.table?.table_number || "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${p.method?.method_name || "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${p.external_ref || "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${p.user?.username || "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px;">${p.payment_date ? new Date(p.payment_date).toLocaleString() : "—"}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:center;">${p.status}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:right; font-weight:bold; color:#059669;">$${amt.toFixed(2)}</td>
+        <td style="border:1px solid #cbd5e1; padding:6px; text-align:right;">៛${Math.round(amt * KHR_RATE).toLocaleString()}</td>
+      </tr>
+    `
+  }).join("")
+
+  const grandTotalUSD = payments
+    .filter((p) => p.status === "Completed")
+    .reduce((sum, p) => sum + Number(p.amount || 0), 0)
+  const grandTotalKHR = Math.round(grandTotalUSD * KHR_RATE)
+
+  const html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="UTF-8" /></head>
+      <body style="font-family: 'Kantumruy Pro', 'Khmer OS Siemreap', Arial, sans-serif;">
+        <table>
+          <tr>
+            <td colspan="10" style="font-size:18px; font-weight:bold; color:#059669; padding:10px 0;">
+              ZOOM GARDEN CAFÉ &amp; WINE — PAYMENTS AUDIT LOG
+            </td>
+          </tr>
+          <thead>
+            <tr style="background-color:#059669; color:#ffffff; font-weight:bold;">
+              <th style="border:1px solid #047857; padding:8px;">Payment ID</th>
+              <th style="border:1px solid #047857; padding:8px;">Order ID</th>
+              <th style="border:1px solid #047857; padding:8px;">Table</th>
+              <th style="border:1px solid #047857; padding:8px;">Method</th>
+              <th style="border:1px solid #047857; padding:8px;">Bakong Ref / MD5</th>
+              <th style="border:1px solid #047857; padding:8px;">Cashier</th>
+              <th style="border:1px solid #047857; padding:8px;">Date &amp; Time</th>
+              <th style="border:1px solid #047857; padding:8px;">Status</th>
+              <th style="border:1px solid #047857; padding:8px;">Amount (USD)</th>
+              <th style="border:1px solid #047857; padding:8px;">Amount (KHR)</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr style="background-color:#ecfdf5; font-weight:bold;">
+              <td colspan="8" style="border:1px solid #059669; padding:8px; text-align:right;">TOTAL COMPLETED (${payments.length} Records):</td>
+              <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">$${grandTotalUSD.toFixed(2)}</td>
+              <td style="border:1px solid #059669; padding:8px; text-align:right; color:#059669;">៛${grandTotalKHR.toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </body>
+    </html>
+  `
+
+  const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8;" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = `zoom-payments-${toLocalDateStr()}.xls`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+export function PaymentStats({ orders = [], todaysPayments = [], todaysRevenue = 0 }) {
   const { t } = useLang()
+
+  const todaysCash = todaysPayments
+    .filter((p) => /cash|សាច់ប្រាក់/i.test(p.method?.method_name || ""))
+    .reduce((s, p) => s + Number(p.amount || 0), 0)
+
+  const todaysDigital = Math.max(0, todaysRevenue - todaysCash)
+
   const allTimeRevenue = orders
     .filter((o) => o.status === "Paid")
     .reduce((s, o) => s + orderTotal(o), 0)
@@ -107,10 +287,34 @@ export function PaymentStats({ orders, todaysPayments, todaysRevenue }) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {[
-        { label: t("history.totalOrders"), value: orders.length, sub: t("reports.allTimeOrders"), icon: ShoppingCart, color: "text-[var(--color-primary)]" },
-        { label: t("reports.todaysPayments"), value: todaysPayments.length, sub: t("reports.ordersPaidToday"), icon: Receipt, color: "text-[var(--color-info)]" },
-        { label: t("reports.todaysRevenue"), value: `$${todaysRevenue.toFixed(2)}`, sub: `៛${Math.round(todaysRevenue * KHR_RATE).toLocaleString()}`, icon: TrendingUp, color: "text-[var(--color-primary)]" },
-        { label: t("reports.totalRevenueAllTime"), value: `$${allTimeRevenue.toFixed(2)}`, sub: `៛${Math.round(allTimeRevenue * KHR_RATE).toLocaleString()}`, icon: DollarSign, color: "text-[var(--color-plum)]" },
+        {
+          label: t("reports.todaysRevenue"),
+          value: `$${todaysRevenue.toFixed(2)}`,
+          sub: `៛${Math.round(todaysRevenue * KHR_RATE).toLocaleString()} · ${todaysPayments.length} ${t("reports.ordersPaidToday")}`,
+          icon: TrendingUp,
+          color: "text-[var(--color-primary)]",
+        },
+        {
+          label: "Cash in Drawer (Today)",
+          value: `$${todaysCash.toFixed(2)}`,
+          sub: `៛${Math.round(todaysCash * KHR_RATE).toLocaleString()}`,
+          icon: DollarSign,
+          color: "text-[var(--color-warning)]",
+        },
+        {
+          label: "KHQR / Digital (Today)",
+          value: `$${todaysDigital.toFixed(2)}`,
+          sub: `៛${Math.round(todaysDigital * KHR_RATE).toLocaleString()}`,
+          icon: CreditCard,
+          color: "text-[var(--color-info)]",
+        },
+        {
+          label: t("reports.totalRevenueAllTime"),
+          value: `$${allTimeRevenue.toFixed(2)}`,
+          sub: `៛${Math.round(allTimeRevenue * KHR_RATE).toLocaleString()} (${orders.length} ${t("cashier.orders")})`,
+          icon: ShoppingCart,
+          color: "text-[var(--color-plum)]",
+        },
       ].map(({ label, value, sub, icon: Icon, color }) => (
         <Card key={label} className="p-5 hover:shadow-md transition-shadow">
           <div className="flex items-start justify-between mb-3">
@@ -127,14 +331,55 @@ export function PaymentStats({ orders, todaysPayments, todaysRevenue }) {
   )
 }
 
-export function PaymentsTable({ payments = [], isLoading = false }) {
+export function PaymentsTable({ payments = [], orders = [], isLoading = false }) {
   const { t } = useLang()
   const [search, setSearch] = useState("")
+  const [methodFilter, setMethodFilter] = useState("All")
+  const [dateFilter, setDateFilter] = useState("All") // "All" | "Today" | "Yesterday"
+  const [viewOrder, setViewOrder] = useState(null)
+
+  const methodNames = useMemo(() => {
+    const set = new Set(payments.map((p) => p.method?.method_name).filter(Boolean))
+    return ["All", ...Array.from(set)]
+  }, [payments])
+
+  const orderMap = useMemo(() => {
+    const map = new Map()
+    for (const o of orders) {
+      map.set(o.order_id, o)
+    }
+    return map
+  }, [orders])
+
+  const resolveOrder = (payment) => {
+    const ordId = payment.order_id || payment.order?.order_id
+    const fullOrder = orderMap.get(ordId)
+    if (fullOrder) return fullOrder
+    if (payment.order) return payment.order
+    return null
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return payments
+    const now = new Date()
+    const todayStr = now.toDateString()
+    const yest = new Date(now)
+    yest.setDate(now.getDate() - 1)
+    const yestStr = yest.toDateString()
+
     return payments.filter((p) => {
+      if (dateFilter === "Today") {
+        if (!p.payment_date || new Date(p.payment_date).toDateString() !== todayStr) return false
+      } else if (dateFilter === "Yesterday") {
+        if (!p.payment_date || new Date(p.payment_date).toDateString() !== yestStr) return false
+      }
+
+      if (methodFilter !== "All" && p.method?.method_name !== methodFilter) {
+        return false
+      }
+
+      if (!q) return true
+
       const payId = String(p.payment_id)
       const ordId = String(p.order_id || p.order?.order_id || "")
       const ordPadded = ordId.padStart(4, "0")
@@ -147,31 +392,96 @@ export function PaymentsTable({ payments = [], isLoading = false }) {
         ordId.includes(q) ||
         ordPadded.includes(q) ||
         `ord-${ordPadded}`.includes(q) ||
+        `pay-${payId.padStart(4, "0")}`.includes(q) ||
         tbl.includes(q) ||
         method.includes(q) ||
         cashier.includes(q) ||
         ref.includes(q)
       )
     })
-  }, [payments, search])
+  }, [payments, search, methodFilter, dateFilter])
+
+  const filteredTotal = useMemo(
+    () => filtered.filter((p) => p.status === "Completed").reduce((s, p) => s + Number(p.amount || 0), 0),
+    [filtered]
+  )
 
   return (
     <Card>
-      <div className="p-5 pb-4 border-b border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="font-semibold text-[var(--color-primary)]">
-            {t("payments.history")} ({filtered.length})
+      <div className="p-5 pb-4 border-b border-[var(--color-border)] flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-[var(--color-primary)]">
+              {t("payments.history")} ({filtered.length})
+            </div>
+            <div className="text-xs text-[var(--color-muted)] mt-0.5">
+              {t("common.total")}:{" "}
+              <span className="font-bold text-[var(--color-primary)]">${filteredTotal.toFixed(2)}</span>{" "}
+              (៛{Math.round(filteredTotal * KHR_RATE).toLocaleString()})
+            </div>
           </div>
-          <div className="text-xs text-[var(--color-muted)] mt-0.5">{t("payments.subtitle")}</div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative w-full sm:w-64">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("payments.searchPlaceholder")}
+                className="pl-9 h-9 text-xs"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 h-9"
+              disabled={filtered.length === 0}
+              onClick={() => exportPaymentsExcel(filtered)}
+            >
+              <FileSpreadsheet size={14} /> Export Excel
+            </Button>
+          </div>
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("payments.searchPlaceholder")}
-            className="pl-9 h-9 text-xs"
-          />
+
+        {/* Filter Pills: Payment Method & Date */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {methodNames.map((m) => (
+              <button
+                key={m}
+                onClick={() => setMethodFilter(m)}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer",
+                  methodFilter === m
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
+                    : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)]"
+                )}
+              >
+                {m === "All" ? t("common.all") : m}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {[
+              { key: "All", label: t("common.all") },
+              { key: "Today", label: t("reports.daily") },
+              { key: "Yesterday", label: t("reports.yesterday") },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setDateFilter(key)}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer",
+                  dateFilter === key
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
+                    : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)]"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -190,12 +500,14 @@ export function PaymentsTable({ payments = [], isLoading = false }) {
                 <TableHead>{t("payments.dateTime")}</TableHead>
                 <TableHead>{t("common.status")}</TableHead>
                 <TableHead className="text-right">{t("payments.amount")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((p) => {
                 const amt = Number(p.amount || 0)
                 const ordId = p.order_id || p.order?.order_id
+                const linkedOrder = resolveOrder(p)
                 return (
                   <TableRow key={p.payment_id}>
                     <TableCell className="text-[var(--color-muted)] text-xs">
@@ -205,10 +517,20 @@ export function PaymentsTable({ payments = [], isLoading = false }) {
                       {ordId ? `ORD-${String(ordId).padStart(4, "0")}` : "—"}
                     </TableCell>
                     <TableCell className="text-[var(--color-muted)]">
-                      {p.order?.table?.table_number || "—"}
+                      {linkedOrder?.table?.table_number || p.order?.table?.table_number || "—"}
                     </TableCell>
-                    <TableCell className="text-xs font-medium text-[var(--color-text-secondary)]">
-                      {p.method?.method_name || "—"}
+                    <TableCell>
+                      <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                        {p.method?.method_name || "—"}
+                      </div>
+                      {p.external_ref && (
+                        <div
+                          className="text-[10px] font-mono text-[var(--color-muted)]"
+                          title={`Bakong MD5: ${p.external_ref}`}
+                        >
+                          MD5: {p.external_ref.slice(0, 10)}...
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-[var(--color-muted)]">
                       {p.user?.username || "—"}
@@ -227,12 +549,34 @@ export function PaymentsTable({ payments = [], isLoading = false }) {
                         ៛{Math.round(amt * KHR_RATE).toLocaleString()}
                       </div>
                     </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {linkedOrder?.order_items && (
+                          <>
+                            <button
+                              onClick={() => printOrderReceipt(linkedOrder)}
+                              title={t("cashier.printReceipt")}
+                              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                            >
+                              <Printer size={14} />
+                            </button>
+                            <button
+                              onClick={() => setViewOrder(linkedOrder)}
+                              title={t("cashier.viewDetails")}
+                              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
                   </TableRow>
                 )
               })}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-[var(--color-muted)] py-10">
+                  <TableCell colSpan={9} className="text-center text-sm text-[var(--color-muted)] py-10">
                     {t("payments.noPayments")}
                   </TableCell>
                 </TableRow>
@@ -241,6 +585,8 @@ export function PaymentsTable({ payments = [], isLoading = false }) {
           </Table>
         )}
       </div>
+
+      <ViewOrderDialog order={viewOrder} onClose={() => setViewOrder(null)} />
     </Card>
   )
 }
@@ -273,6 +619,7 @@ export function ReportBuilder({
   const [localTo, setLocalTo] = useState(todayStr)
   const [statusFilter, setStatusFilter] = useState("All")
   const [search, setSearch] = useState("")
+  const [viewOrder, setViewOrder] = useState(null)
 
   const currentPeriod = setActivePeriod ? activePeriod : localPeriod
   const handlePeriodChange = setActivePeriod || setLocalPeriod
@@ -340,10 +687,39 @@ export function ReportBuilder({
   }, [rangedOrders, statusFilter, search])
 
   const kpis = [
-    { label: t("reports.periodRevenue"), value: `$${totalRevenue.toFixed(2)}`, sub: `៛${Math.round(totalRevenue * KHR_RATE).toLocaleString()} KHR`, icon: DollarSign, tint: "bg-[var(--color-primary-muted)]", color: "text-[var(--color-primary)]", accent: true },
-    { label: t("reports.paidOrders"), value: paidOrders.length, sub: `of ${rangedOrders.length} total order${rangedOrders.length !== 1 ? "s" : ""}`, icon: CheckCircle2, tint: "bg-[var(--color-info-muted)]", color: "text-[var(--color-info)]" },
-    { label: t("reports.avgOrderValue"), value: `$${avgOrderValue.toFixed(2)}`, sub: `៛${Math.round(avgOrderValue * KHR_RATE).toLocaleString()} per paid order`, icon: TrendingUp, tint: "bg-[var(--color-plum-muted)]", color: "text-[var(--color-plum)]" },
-    { label: t("reports.itemsSold"), value: itemsSold, sub: "Across paid orders", icon: ShoppingCart, tint: "bg-[var(--color-flame-muted)]", color: "text-[var(--color-flame)]" },
+    {
+      label: t("reports.periodRevenue"),
+      value: `$${totalRevenue.toFixed(2)}`,
+      sub: `៛${Math.round(totalRevenue * KHR_RATE).toLocaleString()} KHR`,
+      icon: DollarSign,
+      tint: "bg-[var(--color-primary-muted)]",
+      color: "text-[var(--color-primary)]",
+      accent: true,
+    },
+    {
+      label: t("reports.paidOrders"),
+      value: paidOrders.length,
+      sub: `${paidOrders.length} / ${rangedOrders.length} ${t("cashier.orders")}`,
+      icon: CheckCircle2,
+      tint: "bg-[var(--color-info-muted)]",
+      color: "text-[var(--color-info)]",
+    },
+    {
+      label: t("reports.avgOrderValue"),
+      value: `$${avgOrderValue.toFixed(2)}`,
+      sub: `៛${Math.round(avgOrderValue * KHR_RATE).toLocaleString()}`,
+      icon: TrendingUp,
+      tint: "bg-[var(--color-plum-muted)]",
+      color: "text-[var(--color-plum)]",
+    },
+    {
+      label: t("reports.itemsSold"),
+      value: itemsSold,
+      sub: `${paidOrders.length} ${t("reports.paidOrders")}`,
+      icon: ShoppingCart,
+      tint: "bg-[var(--color-flame-muted)]",
+      color: "text-[var(--color-flame)]",
+    },
   ]
 
   return (
@@ -413,7 +789,10 @@ export function ReportBuilder({
 
             <button
               type="button"
-              onClick={() => { handleFromChange(todayStr); handleToChange(todayStr) }}
+              onClick={() => {
+                handleFromChange(todayStr)
+                handleToChange(todayStr)
+              }}
               className="text-xs font-medium text-[var(--color-primary)] hover:underline px-2 py-1"
             >
               {t("reports.resetToday")}
@@ -432,7 +811,9 @@ export function ReportBuilder({
                 <Icon size={16} className={color} />
               </div>
             </div>
-            <div className={cn("text-2xl font-bold", accent ? "text-[var(--color-primary)]" : "text-[var(--color-text)]")}>{value}</div>
+            <div className={cn("text-2xl font-bold", accent ? "text-[var(--color-primary)]" : "text-[var(--color-text)]")}>
+              {value}
+            </div>
             <div className="text-xs text-[var(--color-muted)] mt-0.5">{sub}</div>
           </Card>
         ))}
@@ -460,14 +841,19 @@ export function ReportBuilder({
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-[var(--color-text)]">
                         {m.name}{" "}
-                        <span className="text-[var(--color-muted)] font-normal">({m.count} {t("cashier.orders")})</span>
+                        <span className="text-[var(--color-muted)] font-normal">
+                          ({m.count} {t("cashier.orders")})
+                        </span>
                       </span>
                       <span className="font-bold text-[var(--color-primary)]">
                         ${m.total.toFixed(2)} <span className="text-[var(--color-muted)] font-normal">({pct}%)</span>
                       </span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-[var(--color-primary-muted)] overflow-hidden">
-                      <div className="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300" style={{ width: `${Math.max(pct, 4)}%` }} />
+                      <div
+                        className="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300"
+                        style={{ width: `${Math.max(pct, 4)}%` }}
+                      />
                     </div>
                   </div>
                 )
@@ -481,7 +867,9 @@ export function ReportBuilder({
             <Flame size={16} className="text-[var(--color-flame)]" />
             <div>
               <div className="font-semibold text-sm text-[var(--color-text)]">{t("reports.topItemsPeriod")}</div>
-              <div className="text-xs text-[var(--color-muted)]">{t("reports.mostOrderedPeriod")} {range.label}</div>
+              <div className="text-xs text-[var(--color-muted)]">
+                {t("reports.mostOrderedPeriod")} {range.label}
+              </div>
             </div>
           </div>
 
@@ -490,14 +878,23 @@ export function ReportBuilder({
           ) : (
             <div className="space-y-2.5">
               {topItemsInPeriod.map((item, idx) => (
-                <div key={item.name} className="flex items-center justify-between py-1.5 border-b border-[var(--color-border)]/60 last:border-0 text-xs">
+                <div
+                  key={item.name}
+                  className="flex items-center justify-between py-1.5 border-b border-[var(--color-border)]/60 last:border-0 text-xs"
+                >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-5 h-5 rounded-md bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
+                    <span className="w-5 h-5 rounded-md bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-bold flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </span>
                     <span className="font-medium text-[var(--color-text)] truncate">{item.name}</span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <Badge variant="secondary">{item.qty} {t("dashboard.sold")}</Badge>
-                    <span className="font-semibold text-[var(--color-text)] w-16 text-right">${item.revenue.toFixed(2)}</span>
+                    <Badge variant="secondary">
+                      {item.qty} {t("dashboard.sold")}
+                    </Badge>
+                    <span className="font-semibold text-[var(--color-text)] w-16 text-right">
+                      ${item.revenue.toFixed(2)}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -510,19 +907,55 @@ export function ReportBuilder({
       <Card>
         <div className="p-5 border-b border-[var(--color-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <div className="font-semibold text-[var(--color-text)]">{t("reports.orderTransactions")} ({visibleOrders.length})</div>
-            <div className="text-xs text-[var(--color-muted)]">{t("reports.detailedBreakdown")} {range.label}</div>
+            <div className="font-semibold text-[var(--color-text)]">
+              {t("reports.orderTransactions")} ({visibleOrders.length})
+            </div>
+            <div className="text-xs text-[var(--color-muted)]">
+              {t("reports.detailedBreakdown")} {range.label}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5" disabled={visibleOrders.length === 0}
-              onClick={() => exportOrdersCsv(visibleOrders, range.label)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={visibleOrders.length === 0}
+              onClick={() => exportOrdersCsv(visibleOrders, range.label)}
+            >
               <Download size={13} /> {t("reports.exportCsv")}
             </Button>
-            <Button size="sm" className="gap-1.5" disabled={rangedOrders.length === 0}
-              onClick={() => printExecutiveReport({
-                period: range.label, totalRevenue, paidOrders, avgOrderValue, periodOrders: rangedOrders,
-              })}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={visibleOrders.length === 0}
+              onClick={() =>
+                exportOrdersExcel({
+                  orders: visibleOrders,
+                  periodLabel: range.label,
+                  totalRevenue,
+                  paidOrdersCount: paidOrders.length,
+                  avgOrderValue,
+                })
+              }
+            >
+              <FileSpreadsheet size={13} /> Export Excel
+            </Button>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              disabled={rangedOrders.length === 0}
+              onClick={() =>
+                printExecutiveReport({
+                  period: range.label,
+                  totalRevenue,
+                  paidOrders,
+                  avgOrderValue,
+                  periodOrders: rangedOrders,
+                })
+              }
+            >
               <Printer size={13} /> {t("reports.printReport")}
             </Button>
           </div>
@@ -531,7 +964,12 @@ export function ReportBuilder({
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--color-background)]/40">
           <div className="relative flex-1 min-w-[200px] max-w-xs">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("reports.searchOrderOrTable")} className="pl-9 h-9 text-xs" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("reports.searchOrderOrTable")}
+              className="pl-9 h-9 text-xs"
+            />
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -561,11 +999,12 @@ export function ReportBuilder({
                 <TableRow className="hover:bg-transparent border-none">
                   <TableHead>{t("report.orderNum")}</TableHead>
                   <TableHead>{t("common.table")}</TableHead>
-                  <TableHead>Date & Time</TableHead>
+                  <TableHead>{t("payments.dateTime")}</TableHead>
                   <TableHead>{t("common.items")}</TableHead>
                   <TableHead>{t("report.payment")}</TableHead>
                   <TableHead>{t("common.status")}</TableHead>
                   <TableHead className="text-right">{t("common.total")}</TableHead>
+                  <TableHead className="text-right">{t("common.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -577,22 +1016,46 @@ export function ReportBuilder({
                     <TableRow key={o.order_id}>
                       <TableCell className="font-semibold">ORD-{String(o.order_id).padStart(4, "0")}</TableCell>
                       <TableCell className="text-[var(--color-muted)]">{o.table?.table_number || "—"}</TableCell>
-                      <TableCell className="text-[var(--color-muted)] text-xs">{new Date(o.order_date).toLocaleString()}</TableCell>
-                      <TableCell className="text-[var(--color-muted)]">{itemCount} {t("station.items")}</TableCell>
+                      <TableCell className="text-[var(--color-muted)] text-xs">
+                        {new Date(o.order_date).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-[var(--color-muted)]">
+                        {itemCount} {t("station.items")}
+                      </TableCell>
                       <TableCell className="text-xs text-[var(--color-text-secondary)]">{method}</TableCell>
                       <TableCell>
                         <Badge variant={o.status === "Paid" ? "success" : "warning"}>{o.status}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="font-bold text-[var(--color-primary)]">${total.toFixed(2)}</div>
-                        <div className="text-[10px] text-[var(--color-muted)]">៛{Math.round(total * KHR_RATE).toLocaleString()}</div>
+                        <div className="text-[10px] text-[var(--color-muted)]">
+                          ៛{Math.round(total * KHR_RATE).toLocaleString()}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => printOrderReceipt(o)}
+                            title={t("cashier.printReceipt")}
+                            className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                          >
+                            <Printer size={14} />
+                          </button>
+                          <button
+                            onClick={() => setViewOrder(o)}
+                            title={t("cashier.viewDetails")}
+                            className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                          >
+                            <Eye size={14} />
+                          </button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )
                 })}
                 {visibleOrders.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-sm text-[var(--color-muted)] py-10">
+                    <TableCell colSpan={8} className="text-center text-sm text-[var(--color-muted)] py-10">
                       {t("reports.noOrdersRange")}
                     </TableCell>
                   </TableRow>
@@ -607,6 +1070,8 @@ export function ReportBuilder({
           </div>
         )}
       </Card>
+
+      <ViewOrderDialog order={viewOrder} onClose={() => setViewOrder(null)} />
     </div>
   )
 }

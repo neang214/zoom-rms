@@ -13,17 +13,21 @@ export default function Payments() {
   const { orders, fetchOrders } = useOrderStore()
 
   useEffect(() => {
-    fetchPayments().catch(() => {})
-    fetchOrders().catch(() => {})
+    fetchPayments().catch(() => { })
+    fetchOrders().catch(() => { })
   }, [fetchPayments, fetchOrders])
 
   useSocketRole("admin")
   useSocketEvent("payment:completed", () => {
-    fetchPayments().catch(() => {})
-    fetchOrders().catch(() => {})
+    fetchPayments().catch(() => { })
+    fetchOrders().catch(() => { })
+  })
+  useSocketEvent("order:status_changed", () => {
+    fetchPayments().catch(() => { })
+    fetchOrders().catch(() => { })
   })
 
-  const todaysPayments = payments.filter(p => {
+  const todaysPayments = payments.filter((p) => {
     const d = new Date(p.payment_date)
     const today = new Date()
     return d.toDateString() === today.toDateString() && p.status === "Completed"
@@ -40,7 +44,7 @@ export default function Payments() {
 
       <PaymentStats orders={orders} todaysPayments={todaysPayments} todaysRevenue={todaysRevenue} />
 
-      <PaymentsTable payments={payments} isLoading={paymentsLoading} />
+      <PaymentsTable payments={payments} orders={orders} isLoading={paymentsLoading} />
     </div>
   )
-}
+} 
