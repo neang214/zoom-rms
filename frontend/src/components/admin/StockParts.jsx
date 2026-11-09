@@ -90,31 +90,50 @@ export function StockImagePicker({ preview, onSelect, onClear }) {
 
   return (
     <div>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) onSelect(f) }} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) onSelect(f)
+        }}
+      />
       {hasValidPreview ? (
-        <div className="relative h-32 rounded-xl overflow-hidden border border-[var(--color-border)] group">
+        <div className="relative w-40 h-40 aspect-square mx-auto rounded-2xl overflow-hidden border border-[var(--color-border)] group">
           <img
             src={preview}
             alt="preview"
             onError={() => setFailedPreview(preview)}
             className="w-full h-full object-cover"
           />
-          <button type="button" onClick={onClear}
-            className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1.5 transition-colors">
+          <button
+            type="button"
+            onClick={onClear}
+            className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1.5 transition-colors cursor-pointer"
+          >
             <X size={14} />
           </button>
-          <button type="button" onClick={() => inputRef.current?.click()}
-            className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
-            <span className="text-white text-xs font-medium bg-black/60 px-3 py-1.5 rounded-lg">{t("menu.changePhoto")}</span>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+          >
+            <span className="text-white text-xs font-medium bg-black/60 px-3 py-1.5 rounded-lg">
+              {t("menu.changePhoto")}
+            </span>
           </button>
         </div>
       ) : (
-        <button type="button" onClick={() => inputRef.current?.click()}
-          className="w-full h-32 rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-primary)] flex flex-col items-center justify-center gap-1.5 text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)]/40 transition-all">
-          <ImagePlus size={22} />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="w-40 h-40 aspect-square mx-auto rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-primary)] flex flex-col items-center justify-center gap-1.5 text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)]/40 transition-all cursor-pointer"
+        >
+          <ImagePlus size={24} />
           <span className="text-xs font-medium">{t("menu.clickToUpload")}</span>
-          <span className="text-[10px] text-[var(--color-muted)]">PNG or JPG</span>
+          <span className="text-[10px] text-[var(--color-muted)]">1:1 Square</span>
         </button>
       )}
     </div>
