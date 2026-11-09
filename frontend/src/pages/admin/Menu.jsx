@@ -12,8 +12,6 @@ import { ConfirmModal } from "@/components/shared"
 import { useLang } from "@/i18n/LanguageContext"
 import { deleteErrorMessage, imageUrl, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
 
-// Converts .jfif / .webp / large images into a clean, compressed .jpg File
-// so Express/Render never blocks .jfif extensions or times out on large uploads.
 function normalizeImageToJpg(file, maxWidth = 800, quality = 0.85) {
   return new Promise((resolve) => {
     const img = new Image()
@@ -78,7 +76,7 @@ export default function Menu() {
 
   const [deleteItemTarget, setDeleteItemTarget] = useState(null)
   const [deletingItem, setDeletingItem] = useState(false)
-  const [deleteItemError, setDeleteItemError] = useState("")
+  const [deleteItemError, setDeleteItemError] = = State("")
 
   useEffect(() => {
     fetchItems()
@@ -121,12 +119,12 @@ export default function Menu() {
     setAddOpen(true)
   }
 
-  // Note: Do NOT manually set "Content-Type": "multipart/form-data" on axios;
-  // letting the browser set it automatically includes the required multipart boundary!
   const uploadItemImage = async (id, file) => {
     const formData = new FormData()
-    formData.append("image", file)
-    await api.post(`/menu-items/${id}/image`, formData)
+    formData.append("image", file, file.name || "menu.jpg")
+    await api.post(`/menu-items/${id}/image`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
   }
 
   const handleAdd = async () => {
