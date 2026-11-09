@@ -52,6 +52,9 @@ function generateBarcodeSvg(value) {
   }
 }
 
+// ============================================================================
+// Shared 80mm POS Thermal CSS (For Cashier)
+// ============================================================================
 const THERMAL_80MM_CSS = `
   * {
     box-sizing: border-box;
@@ -166,14 +169,142 @@ const THERMAL_80MM_CSS = `
   }
 `
 
-// Prints inside an isolated hidden iframe so browser popup blockers NEVER block it
-// and it NEVER prints the main dashboard webpage!
+// ============================================================================
+// Shared A4 Portrait Executive CSS (For Admin Reports)
+// ============================================================================
+const A4_REPORT_CSS = `
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #0f172a;
+    font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .a4-container {
+    width: 100%;
+    max-width: 186mm;
+    margin: 0 auto;
+  }
+  .a4-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid #059669;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  .a4-brand {
+    border: 2px solid #059669;
+    border-radius: 10px;
+    padding: 6px 14px;
+    text-align: center;
+  }
+  .a4-brand-title {
+    font-size: 22px;
+    font-weight: 900;
+    color: #059669;
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .a4-brand-sub {
+    font-size: 10px;
+    color: #334155;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .a4-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .a4-kpi-card {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #f8fafc;
+  }
+  .a4-kpi-card.highlight {
+    background: #ecfdf5;
+    border-color: #059669;
+  }
+  .a4-kpi-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: #64748b;
+    font-weight: 700;
+  }
+  .a4-kpi-val {
+    font-size: 18px;
+    font-weight: 800;
+    color: #0f172a;
+    margin-top: 2px;
+  }
+  .a4-kpi-card.highlight .a4-kpi-val {
+    color: #059669;
+  }
+  .a4-kpi-sub {
+    font-size: 10px;
+    color: #64748b;
+    margin-top: 2px;
+  }
+  .a4-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 14px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .a4-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .a4-table th {
+    background: #059669;
+    color: #ffffff;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 7px 8px;
+    border: 1px solid #047857;
+    text-align: left;
+  }
+  .a4-table td {
+    padding: 6px 8px;
+    border: 1px solid #cbd5e1;
+  }
+  .a4-table tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+  .a4-table tfoot td {
+    background: #ecfdf5;
+    font-weight: 800;
+    border: 1px solid #059669;
+    padding: 8px;
+  }
+  .text-right { text-align: right !important; }
+  .text-center { text-align: center !important; }
+`
+
 function printThermalReceiptHtml(title, bodyHtml) {
-  const existing = document.getElementById("zoom-thermal-print-iframe")
+  const existing = document.getElementById("zoom-print-iframe")
   if (existing) existing.remove()
 
   const iframe = document.createElement("iframe")
-  iframe.id = "zoom-thermal-print-iframe"
+  iframe.id = "zoom-print-iframe"
   iframe.style.position = "fixed"
   iframe.style.right = "0"
   iframe.style.bottom = "0"
@@ -226,8 +357,55 @@ function printThermalReceiptHtml(title, bodyHtml) {
   }, 150)
 }
 
+function printA4ReportHtml(title, bodyHtml) {
+  const existing = document.getElementById("zoom-print-iframe")
+  if (existing) existing.remove()
+
+  const iframe = document.createElement("iframe")
+  iframe.id = "zoom-print-iframe"
+  iframe.style.position = "fixed"
+  iframe.style.right = "0"
+  iframe.style.bottom = "0"
+  iframe.style.width = "210mm"
+  iframe.style.height = "0"
+  iframe.style.border = "0"
+  iframe.style.opacity = "0"
+  iframe.style.pointerEvents = "none"
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(title)}</title>
+        <style>${A4_REPORT_CSS}</style>
+      </head>
+      <body>
+        <div class="a4-container">
+          ${bodyHtml}
+        </div>
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.focus()
+      iframe.contentWindow.print()
+    } finally {
+      setTimeout(() => {
+        iframe.remove()
+      }, 3000)
+    }
+  }, 150)
+}
+
 // ============================================================================
-// 1. 80mm Customer Receipt (Bill / Tax Invoice)
+// 1. 80mm Customer Receipt (Cashier / Admin Order Receipt)
 // ============================================================================
 export function printOrderReceipt(order) {
   if (!order) return
@@ -465,7 +643,9 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
 }
 
 // ============================================================================
-// 3. 80mm Executive / Period Sales Summary Slip
+// 3. Sales Report:
+//    - format === "thermal" (Cashier) -> 80mm Thermal Roll
+//    - format === "a4"      (Admin)   -> Full A4 Portrait Executive Report
 // ============================================================================
 export function printExecutiveReport({
   period = "Daily",
@@ -473,6 +653,7 @@ export function printExecutiveReport({
   paidOrders = [],
   avgOrderValue = 0,
   periodOrders = [],
+  format = "a4",
 }) {
   const revUSD = Number(totalRevenue || 0)
   const revKHR = Math.round(revUSD * KHR_RATE)
@@ -486,95 +667,221 @@ export function printExecutiveReport({
     methodMap.set(mName, prev)
   }
 
-  const methodsHtml = Array.from(methodMap.entries())
+  // Cashier 80mm Thermal Summary Slip
+  if (format === "thermal") {
+    const methodsHtml = Array.from(methodMap.entries())
+      .map(
+        ([name, info]) => `
+        <div class="meta-row">
+          <span>${escapeHtml(name)} (${info.count})</span>
+          <span class="bold">$${info.total.toFixed(2)}</span>
+        </div>
+      `
+      )
+      .join("")
+
+    const orderRowsHtml = periodOrders
+      .slice(0, 60)
+      .map((o) => {
+        const t = orderTotal(o)
+        return `
+          <tr>
+            <td>#${String(o.order_id).padStart(4, "0")}</td>
+            <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+            <td class="center">${escapeHtml(o.status)}</td>
+            <td class="right bold">$${t.toFixed(2)}</td>
+          </tr>
+        `
+      })
+      .join("")
+
+    const thermalHtml = `
+      <div class="center">
+        <div class="brand-box">
+          <div class="brand-title">ZOOM</div>
+          <div class="brand-sub">CASHIER SALES REPORT</div>
+        </div>
+        <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
+      </div>
+
+      <div class="divider-solid"></div>
+
+      <div class="meta-row">
+        <span>Total Orders:</span>
+        <span class="bold">${periodOrders.length}</span>
+      </div>
+      <div class="meta-row">
+        <span>Paid Orders:</span>
+        <span class="bold">${paidOrders.length}</span>
+      </div>
+      <div class="meta-row">
+        <span>Avg Ticket:</span>
+        <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
+      </div>
+
+      ${methodsHtml
+        ? `<div class="divider"></div>
+             <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+             ${methodsHtml}`
+        : ""
+      }
+
+      <div class="divider-solid"></div>
+
+      <div class="total-row">
+        <span>TOTAL (USD)</span>
+        <span>$${revUSD.toFixed(2)}</span>
+      </div>
+      <div class="khr-row">
+        <span>សរុប (KHR)</span>
+        <span>៛${revKHR.toLocaleString()}</span>
+      </div>
+
+      <div class="divider"></div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th class="center">Tbl</th>
+            <th class="center">Status</th>
+            <th class="right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orderRowsHtml}
+        </tbody>
+      </table>
+
+      <div class="divider-solid"></div>
+      <div class="center" style="font-size:9px; margin-top:4px;">
+        Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
+      </div>
+    `
+
+    printThermalReceiptHtml(`Cashier Report - ${period}`, thermalHtml)
+    return
+  }
+
+  // Admin Full A4 Portrait Executive Report
+  const itemsSold = paidOrders.reduce(
+    (sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0),
+    0
+  )
+
+  const a4MethodRows = Array.from(methodMap.entries())
     .map(
       ([name, info]) => `
-      <div class="meta-row">
-        <span>${escapeHtml(name)} (${info.count})</span>
-        <span class="bold">$${info.total.toFixed(2)}</span>
-      </div>
+      <tr>
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td class="text-center">${info.count}</td>
+        <td class="text-right"><strong>$${info.total.toFixed(2)}</strong></td>
+        <td class="text-right">៛${Math.round(info.total * KHR_RATE).toLocaleString()}</td>
+      </tr>
     `
     )
     .join("")
 
-  const orderRowsHtml = periodOrders
-    .slice(0, 60)
+  const a4OrderRows = periodOrders
     .map((o) => {
       const t = orderTotal(o)
+      const count = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
+      const method = o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
       return `
         <tr>
-          <td>#${String(o.order_id).padStart(4, "0")}</td>
-          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
-          <td class="center">${escapeHtml(o.status)}</td>
-          <td class="right bold">$${t.toFixed(2)}</td>
+          <td><strong>ORD-${String(o.order_id).padStart(4, "0")}</strong></td>
+          <td class="text-center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td>${escapeHtml(new Date(o.order_date).toLocaleString("en-GB"))}</td>
+          <td class="text-center">${count}</td>
+          <td>${escapeHtml(method)}</td>
+          <td class="text-center">${escapeHtml(o.status)}</td>
+          <td class="text-right"><strong>$${t.toFixed(2)}</strong></td>
+          <td class="text-right">៛${Math.round(t * KHR_RATE).toLocaleString()}</td>
         </tr>
       `
     })
     .join("")
 
-  const html = `
-    <div class="center">
-      <div class="brand-box">
-        <div class="brand-title">ZOOM</div>
-        <div class="brand-sub">SALES SUMMARY REPORT</div>
+  const a4Html = `
+    <div class="a4-header">
+      <div class="a4-brand">
+        <div class="a4-brand-title">ZOOM</div>
+        <div class="a4-brand-sub">Garden Café &amp; Wine · Sen Sok</div>
       </div>
-      <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
+      <div style="text-align:right;">
+        <div style="font-size:18px; font-weight:800; color:#0f172a;">EXECUTIVE SALES REPORT</div>
+        <div style="font-size:12px; font-weight:600; color:#059669; margin-top:2px;">Period: ${escapeHtml(period)}</div>
+        <div style="font-size:10px; color:#64748b; margin-top:2px;">Generated: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+      </div>
     </div>
 
-    <div class="divider-solid"></div>
+    <div class="a4-kpi-grid">
+      <div class="a4-kpi-card highlight">
+        <div class="a4-kpi-label">Paid Revenue (USD)</div>
+        <div class="a4-kpi-val">$${revUSD.toFixed(2)}</div>
+        <div class="a4-kpi-sub">៛${revKHR.toLocaleString()} KHR</div>
+      </div>
+      <div class="a4-kpi-card">
+        <div class="a4-kpi-label">Paid Orders</div>
+        <div class="a4-kpi-val">${paidOrders.length}</div>
+        <div class="a4-kpi-sub">of ${periodOrders.length} total orders</div>
+      </div>
+      <div class="a4-kpi-card">
+        <div class="a4-kpi-label">Average Ticket</div>
+        <div class="a4-kpi-val">$${Number(avgOrderValue || 0).toFixed(2)}</div>
+        <div class="a4-kpi-sub">៛${Math.round(Number(avgOrderValue || 0) * KHR_RATE).toLocaleString()} KHR</div>
+      </div>
+      <div class="a4-kpi-card">
+        <div class="a4-kpi-label">Items Sold</div>
+        <div class="a4-kpi-val">${itemsSold}</div>
+        <div class="a4-kpi-sub">Across paid orders</div>
+      </div>
+    </div>
 
-    <div class="meta-row">
-      <span>Total Orders:</span>
-      <span class="bold">${periodOrders.length}</span>
-    </div>
-    <div class="meta-row">
-      <span>Paid Orders:</span>
-      <span class="bold">${paidOrders.length}</span>
-    </div>
-    <div class="meta-row">
-      <span>Avg Ticket:</span>
-      <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
-    </div>
-
-    ${methodsHtml
-      ? `<div class="divider"></div>
-           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
-           ${methodsHtml}`
+    ${a4MethodRows
+      ? `
+      <div class="a4-section-title">Revenue by Payment Method</div>
+      <table class="a4-table" style="margin-bottom:16px;">
+        <thead>
+          <tr>
+            <th>Payment Method</th>
+            <th class="text-center">Orders</th>
+            <th class="text-right">Total (USD)</th>
+            <th class="text-right">Total (KHR)</th>
+          </tr>
+        </thead>
+        <tbody>${a4MethodRows}</tbody>
+      </table>
+    `
       : ""
     }
 
-    <div class="divider-solid"></div>
-
-    <div class="total-row">
-      <span>TOTAL (USD)</span>
-      <span>$${revUSD.toFixed(2)}</span>
-    </div>
-    <div class="khr-row">
-      <span>សរុប (KHR)</span>
-      <span>៛${revKHR.toLocaleString()}</span>
-    </div>
-
-    <div class="divider"></div>
-
-    <table>
+    <div class="a4-section-title">Order Transactions (${periodOrders.length})</div>
+    <table class="a4-table">
       <thead>
         <tr>
-          <th>Order</th>
-          <th class="center">Tbl</th>
-          <th class="center">Status</th>
-          <th class="right">Total</th>
+          <th>Order #</th>
+          <th class="text-center">Table</th>
+          <th>Date &amp; Time</th>
+          <th class="text-center">Items</th>
+          <th>Payment</th>
+          <th class="text-center">Status</th>
+          <th class="text-right">Total (USD)</th>
+          <th class="text-right">Total (KHR)</th>
         </tr>
       </thead>
       <tbody>
-        ${orderRowsHtml}
+        ${a4OrderRows}
       </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="6" class="text-right">GRAND TOTAL (PAID REVENUE):</td>
+          <td class="text-right" style="color:#059669;">$${revUSD.toFixed(2)}</td>
+          <td class="text-right" style="color:#059669;">៛${revKHR.toLocaleString()}</td>
+        </tr>
+      </tfoot>
     </table>
-
-    <div class="divider-solid"></div>
-    <div class="center" style="font-size:9px; margin-top:4px;">
-      Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
-    </div>
   `
 
-  printThermalReceiptHtml(`Sales Report - ${period}`, html)
+  printA4ReportHtml(`Executive Report - ${period}`, a4Html)
 }
