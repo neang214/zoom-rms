@@ -12,6 +12,51 @@ import { ConfirmModal } from "@/components/shared"
 import { useLang } from "@/i18n/LanguageContext"
 import { deleteErrorMessage, imageUrl, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
 
+// Converts .jfif / .webp / large images into a clean, compressed .jpg File
+// so Express/Render never blocks .jfif extensions or times out on large uploads.
+function normalizeImageToJpg(file, maxWidth = 800, quality = 0.85) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      let { width, height } = img
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width)
+        width = maxWidth
+      }
+      const canvas = document.createElement("canvas")
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext("2d")
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file)
+            return
+          }
+          const cleanName = (file.name || "menu").replace(/\.[^.]+$/, "") + ".jpg"
+          resolve(new File([blob], cleanName, { type: "image/jpeg" }))
+        },
+        "image/jpeg",
+        quality
+      )
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(file)
+    }
+
+    img.src = objectUrl
+  })
+}
+
 export default function Menu() {
   const { t, lang } = useLang()
   usePageTitle(t("nav.menu"))
@@ -31,8 +76,6 @@ export default function Menu() {
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
 
-  // Delete confirmation state — separate for items vs categories since
-  // both can be deleted from this page.
   const [deleteItemTarget, setDeleteItemTarget] = useState(null)
   const [deletingItem, setDeletingItem] = useState(false)
   const [deleteItemError, setDeleteItemError] = useState("")
@@ -51,10 +94,12 @@ export default function Menu() {
 
   const categoryName = (id) => (categories || []).find(c => c.category_id === id)?.category_name || "—"
 
-  const handleImageSelect = (file) => {
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
+  const handleImageSelect = async (file) => {
+    const cleanJpgFile = await normalizeImageToJpg(file)
+    setImageFile(cleanJpgFile)
+    setImagePreview(URL.createObjectURL(cleanJpgFile))
   }
+
   const handleImageClear = () => {
     setImageFile(null)
     setImagePreview(null)
@@ -76,14 +121,12 @@ export default function Menu() {
     setAddOpen(true)
   }
 
-  // Uploads the image file to the menu item's image endpoint.
-  // Backend needs: POST /menu-items/:id/image (multer single("image")) -> { image_url }
+  // Note: Do NOT manually set "Content-Type": "multipart/form-data" on axios;
+  // letting the browser set it automatically includes the required multipart boundary!
   const uploadItemImage = async (id, file) => {
     const formData = new FormData()
     formData.append("image", file)
-    await api.post(`/menu-items/${id}/image`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    })
+    await api.post(`/menu-items/${id}/image`, formData)
   }
 
   const handleAdd = async () => {
@@ -185,9 +228,6 @@ export default function Menu() {
     }
   }
 
-  // Called directly by AddCategoryDialog, which owns its own inline
-  // confirm/error UI now (see AddCategoryDialog in MenuParts.jsx) — this
-  // just performs the delete and lets errors propagate up to it.
   const handleDeleteCategory = async (cat) => {
     await deleteCategory(cat.category_id)
     if (activeCat === cat.category_id) setActiveCat("All")
@@ -195,7 +235,6 @@ export default function Menu() {
 
   return (
     <div className="space-y-5">
-      {}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
