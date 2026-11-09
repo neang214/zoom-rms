@@ -76,7 +76,7 @@ export default function Menu() {
 
   const [deleteItemTarget, setDeleteItemTarget] = useState(null)
   const [deletingItem, setDeletingItem] = useState(false)
-  const [deleteItemError, setDeleteItemError] = = State("")
+  const [deleteItemError, setDeleteItemError] = useState("")
 
   useEffect(() => {
     fetchItems()
