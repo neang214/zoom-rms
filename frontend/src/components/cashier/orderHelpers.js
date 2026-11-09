@@ -59,83 +59,19 @@ const THERMAL_80MM_CSS = `
     print-color-adjust: exact;
   }
   html, body {
+    width: 80mm;
     margin: 0;
     padding: 0;
+    background: #ffffff;
+    color: #000000;
     font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
     font-size: 11px;
     line-height: 1.35;
-    color: #000000;
   }
-  /* Screen preview styling (looks like an 80mm thermal paper roll on screen) */
-  @media screen {
-    body {
-      background: #1e293b;
-      padding: 48px 0 24px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-    }
-    .ticket {
-      width: 80mm;
-      background: #ffffff;
-      padding: 5mm 4mm 6mm;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-      border-radius: 2px;
-    }
-    .preview-toolbar {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 40px;
-      background: #0f172a;
-      border-bottom: 1px solid #334155;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 12px;
-      color: #f8fafc;
-      font-size: 12px;
-      z-index: 50;
-    }
-    .preview-btn {
-      background: #059669;
-      color: #ffffff;
-      border: none;
-      border-radius: 6px;
-      padding: 5px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .preview-btn-close {
-      background: transparent;
-      color: #cbd5e1;
-      border: 1px solid #475569;
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-size: 11px;
-      cursor: pointer;
-    }
-  }
-  /* Actual Print / PDF Output: Exact 80mm Width */
-  @media print {
-    html, body {
-      width: 80mm !important;
-      background: #ffffff !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    .no-print {
-      display: none !important;
-    }
-    .ticket {
-      width: 72mm !important;
-      margin: 0 auto !important;
-      padding: 2mm 0 4mm !important;
-      box-shadow: none !important;
-    }
+  .ticket {
+    width: 72mm;
+    margin: 0 auto;
+    padding: 3mm 1mm 5mm;
   }
   .center { text-align: center; }
   .right { text-align: right; }
@@ -230,57 +166,64 @@ const THERMAL_80MM_CSS = `
   }
 `
 
-function openThermalPrintWindow(title, bodyHtml) {
-  const win = window.open("", "_blank", "width=380,height=680")
-  if (!win) {
-    window.print()
-    return
-  }
-  win.document.write(`
+// Prints inside an isolated hidden iframe so browser popup blockers NEVER block it
+// and it NEVER prints the main dashboard webpage!
+function printThermalReceiptHtml(title, bodyHtml) {
+  const existing = document.getElementById("zoom-thermal-print-iframe")
+  if (existing) existing.remove()
+
+  const iframe = document.createElement("iframe")
+  iframe.id = "zoom-thermal-print-iframe"
+  iframe.style.position = "fixed"
+  iframe.style.right = "0"
+  iframe.style.bottom = "0"
+  iframe.style.width = "80mm"
+  iframe.style.height = "0"
+  iframe.style.border = "0"
+  iframe.style.opacity = "0"
+  iframe.style.pointerEvents = "none"
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
     <!doctype html>
     <html>
       <head>
         <meta charset="UTF-8" />
         <title>${escapeHtml(title)}</title>
-        <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;600;700&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
         <style>${THERMAL_80MM_CSS}</style>
         <style id="dynamic-page-size">
           @page { size: 80mm 200mm; margin: 0mm; }
         </style>
       </head>
       <body>
-        <div class="preview-toolbar no-print">
-          <span>🧾 80mm POS Thermal Receipt</span>
-          <div style="display:flex; gap:6px;">
-            <button class="preview-btn" onclick="window.print()">🖨️ Print</button>
-            <button class="preview-btn-close" onclick="window.close()">✕</button>
-          </div>
-        </div>
         <div id="receipt-ticket" class="ticket">
           ${bodyHtml}
         </div>
-        <script>
-          function triggerThermalPrint() {
-            var ticket = document.getElementById('receipt-ticket');
-            if (ticket) {
-              // Convert pixel height to mm (1px ≈ 0.2646mm) so @page has two valid <length> values
-              var heightMm = Math.max(115, Math.ceil(ticket.offsetHeight * 0.2646) + 8);
-              var pageStyle = document.getElementById('dynamic-page-size');
-              if (pageStyle) {
-                pageStyle.textContent = '@page { size: 80mm ' + heightMm + 'mm; margin: 0mm; }';
-              }
-            }
-            window.focus();
-            window.print();
-          }
-          window.onload = function() {
-            setTimeout(triggerThermalPrint, 250);
-          };
-        </script>
       </body>
     </html>
   `)
-  win.document.close()
+  doc.close()
+
+  setTimeout(() => {
+    try {
+      const ticket = doc.getElementById("receipt-ticket")
+      if (ticket) {
+        const heightMm = Math.max(110, Math.ceil(ticket.offsetHeight * 0.2646) + 8)
+        const pageStyle = doc.getElementById("dynamic-page-size")
+        if (pageStyle) {
+          pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0mm; }`
+        }
+      }
+      iframe.contentWindow.focus()
+      iframe.contentWindow.print()
+    } finally {
+      setTimeout(() => {
+        iframe.remove()
+      }, 3000)
+    }
+  }, 150)
 }
 
 // ============================================================================
@@ -399,7 +342,7 @@ export function printOrderReceipt(order) {
     </div>
   `
 
-  openThermalPrintWindow(`Receipt ${orderCode}`, html)
+  printThermalReceiptHtml(`Receipt ${orderCode}`, html)
 }
 
 // ============================================================================
@@ -518,7 +461,7 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
     </div>
   `
 
-  openThermalPrintWindow(`Daily Report - ${date}`, html)
+  printThermalReceiptHtml(`Daily Report - ${date}`, html)
 }
 
 // ============================================================================
@@ -633,5 +576,5 @@ export function printExecutiveReport({
     </div>
   `
 
-  openThermalPrintWindow(`Sales Report - ${period}`, html)
+  printThermalReceiptHtml(`Sales Report - ${period}`, html)
 }
