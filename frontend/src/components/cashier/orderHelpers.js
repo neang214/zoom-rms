@@ -1,638 +1,556 @@
-
-import React from "react"
-import { renderToStaticMarkup } from "react-dom/server"
-import { QRCodeSVG } from "qrcode.react"
 import JsBarcode from "jsbarcode"
 
 export const KHR_RATE = 4100
 
-export function orderTotal(order) {
-  return order.order_items?.reduce(
-    (sum, oi) => sum + Number(oi.unit_price) * oi.quantity,
-    0
-  ) || 0
-}
+export const orderTotal = (order) =>
+  order?.order_items?.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0) || 0
 
 export const statusConfig = {
-  Served:    { labelKey: "cashier.readyForPayment", color: "bg-[var(--color-primary)] text-white", barColor: "border-l-[var(--color-primary)]" },
-  Preparing: { labelKey: "status.cooking",          color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]", barColor: "border-l-[var(--color-warning)]" },
-  Pending:   { labelKey: "status.pending",          color: "bg-[var(--color-border)] text-[var(--color-text-secondary)]", barColor: "border-l-[var(--color-border-strong)]" },
+  Pending: {
+    labelKey: "status.pending",
+    color: "bg-[var(--color-border)] text-[var(--color-text-secondary)]",
+  },
+  Preparing: {
+    labelKey: "status.preparing",
+    color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]",
+  },
+  Served: {
+    labelKey: "status.served",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]",
+  },
+  Paid: {
+    labelKey: "status.paid",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]",
+  },
 }
 
-export function escapeHtml(str) {
-  if (!str) return ""
-  return String(str)
+function escapeHtml(str) {
+  return String(str ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;")
 }
 
-export function generateBarcodeSvg(value) {
+function generateBarcodeSvg(value) {
   try {
-    const svgNode = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-    JsBarcode(svgNode, value, {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    JsBarcode(svg, value, {
       format: "CODE128",
-      width: 1.6,
-      height: 44,
+      width: 1.5,
+      height: 36,
       displayValue: true,
       fontSize: 11,
-      font: "monospace",
-      textMargin: 3,
-      margin: 4,
+      fontOptions: "bold",
+      margin: 2,
+      lineColor: "#000000",
+      background: "#ffffff",
     })
-    svgNode.setAttribute("style", "max-width: 100%; height: auto; display: block; margin: 0 auto;")
-    return svgNode.outerHTML
-  } catch (err) {
-    console.error("Barcode generation error:", err)
-    return ""
+    return svg.outerHTML
+  } catch {
+    return `<div style="font-family:monospace;font-size:12px;font-weight:bold;letter-spacing:2px;">${escapeHtml(value)}</div>`
   }
 }
 
-export function generateQrCodeSvg(value, size = 76) {
-  try {
-    return renderToStaticMarkup(
-      React.createElement(QRCodeSVG, {
-        value: String(value),
-        size,
-        level: "M",
-        fgColor: "#000000",
-        bgColor: "#ffffff",
-      })
-    )
-  } catch (err) {
-    console.error("QR generation error:", err)
-    return ""
+// Shared 80mm POS Thermal Printer CSS (72mm printable width, 0mm browser margins)
+const THERMAL_80MM_CSS = `
+  @page {
+    size: 80mm auto;
+    margin: 0mm;
   }
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    width: 80mm;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #000000;
+    font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .ticket {
+    width: 72mm;
+    margin: 0 auto;
+    padding: 3mm 1mm 6mm;
+  }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .bold { font-weight: 700; }
+  .brand-box {
+    border: 1.5px solid #000;
+    border-radius: 6px;
+    padding: 4px 10px;
+    display: inline-block;
+    margin-bottom: 4px;
+  }
+  .brand-title {
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    line-height: 1.1;
+  }
+  .brand-sub {
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .divider {
+    border-top: 1px dashed #000;
+    margin: 6px 0;
+  }
+  .divider-solid {
+    border-top: 1.5px solid #000;
+    margin: 6px 0;
+  }
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    margin: 2px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-bottom: 1px solid #000;
+    padding: 3px 0;
+    text-align: left;
+  }
+  td {
+    padding: 3.5px 0;
+    vertical-align: top;
+    font-size: 11px;
+  }
+  .item-km {
+    font-size: 10px;
+    color: #111;
+  }
+  .item-note {
+    font-size: 9.5px;
+    font-style: italic;
+  }
+  .total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 13px;
+    font-weight: 800;
+    margin: 3px 0;
+  }
+  .khr-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11.5px;
+    font-weight: 700;
+    margin: 2px 0;
+  }
+  .status-badge {
+    display: inline-block;
+    border: 1px solid #000;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .barcode-wrap {
+    margin-top: 8px;
+    text-align: center;
+  }
+  .barcode-wrap svg {
+    max-width: 68mm;
+    height: auto;
+  }
+`
+
+function openThermalPrintWindow(title, bodyHtml) {
+  const win = window.open("", "_blank", "width=360,height=640")
+  if (!win) {
+    window.print()
+    return
+  }
+  win.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(title)}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;600;700&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
+        <style>${THERMAL_80MM_CSS}</style>
+      </head>
+      <body>
+        <div class="ticket">
+          ${bodyHtml}
+        </div>
+      </body>
+    </html>
+  `)
+  win.document.close()
+  win.focus()
+  setTimeout(() => {
+    win.print()
+    win.close()
+  }, 350)
 }
 
-export function executePrint(html) {
-  // Use a hidden iframe to prevent popup blockers and eliminate premature window closure
-  let frame = document.getElementById("__rms_print_frame__")
-  if (!frame) {
-    frame = document.createElement("iframe")
-    frame.id = "__rms_print_frame__"
-    frame.style.position = "fixed"
-    frame.style.right = "0"
-    frame.style.bottom = "0"
-    frame.style.width = "0"
-    frame.style.height = "0"
-    frame.style.border = "0"
-    document.body.appendChild(frame)
-  }
-
-  try {
-    const doc = frame.contentWindow?.document || frame.contentDocument
-    if (doc) {
-      doc.open()
-      doc.write(html)
-      doc.close()
-      setTimeout(() => {
-        try {
-          frame.contentWindow.focus()
-          frame.contentWindow.print()
-        } catch (e) {
-          console.error("Iframe print error:", e)
-        }
-      }, 150)
-      return
-    }
-  } catch (err) {
-    console.warn("Iframe print fallback:", err)
-  }
-
-  // Fallback to window.open if iframe is blocked
-  const win = window.open("", "_blank", "width=800,height=700")
-  if (win) {
-    win.document.open()
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    setTimeout(() => {
-      try { win.print() } catch (e) {}
-    }, 250)
-  }
-}
-
+// ============================================================================
+// 1. 80mm Customer Receipt (Bill / Tax Invoice)
+// ============================================================================
 export function printOrderReceipt(order) {
   if (!order) return
-  const total = orderTotal(order)
-  const khr = Math.round(total * KHR_RATE)
-  const payment = order.payments?.[0]
-  const isPaid = order.status === "Paid" || !!payment
 
-  const barcodeVal = `ORD-${String(order.order_id).padStart(4, "0")}`
-  const barcodeSvg = generateBarcodeSvg(barcodeVal)
-  const qrSvg = generateQrCodeSvg(barcodeVal, 76)
+  const totalUSD = orderTotal(order)
+  const totalKHR = Math.round(totalUSD * KHR_RATE)
+  const orderCode = `ORD-${String(order.order_id).padStart(4, "0")}`
+  const isPaid = (order.is_paid ?? order.status === "Paid") || order.payments?.length > 0
+  const paymentMethod = order.payments?.[0]?.method?.method_name || (isPaid ? "Paid" : "Unpaid")
+  const dateStr = order.order_date ? new Date(order.order_date).toLocaleString("en-GB") : new Date().toLocaleString("en-GB")
+  const barcodeSvg = generateBarcodeSvg(orderCode)
 
-  const dt = new Date(order.order_date || Date.now()).toLocaleString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  const itemsHtml = (order.order_items || [])
+    .map((oi) => {
+      const enName = oi.menu_item?.item_name || `Item #${oi.menu_item_id}`
+      const kmName = oi.menu_item?.item_name_km
+      const unitPrice = Number(oi.unit_price || 0)
+      const lineTotal = unitPrice * Number(oi.quantity || 1)
+      return `
+        <tr>
+          <td style="padding-right:4px;">
+            <div class="bold">${escapeHtml(enName)}</div>
+            ${kmName ? `<div class="item-km">${escapeHtml(kmName)}</div>` : ""}
+            ${oi.note ? `<div class="item-note">* ${escapeHtml(oi.note)}</div>` : ""}
+          </td>
+          <td class="center" style="width:10mm;">${oi.quantity}</td>
+          <td class="right" style="width:14mm;">$${unitPrice.toFixed(2)}</td>
+          <td class="right bold" style="width:15mm;">$${lineTotal.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
 
-  const lines = (order.order_items || []).map(oi => {
-    const qty = Number(oi.quantity) || 1
-    const price = Number(oi.unit_price || oi.menu_item?.price || 0)
-    const lineTotal = price * qty
-    const enName = oi.menu_item?.item_name || "Item"
-    const kmName = oi.menu_item?.item_name_km
-    const hasKm = kmName && kmName !== enName
-    return `<tr>
-      <td class="qty">${qty}&times;</td>
-      <td class="desc">
-        <div class="name">${escapeHtml(enName)}${hasKm ? `<div style="font-size:10px;font-weight:normal;color:#444;">${escapeHtml(kmName)}</div>` : ""}</div>
-        ${oi.note ? `<div class="note">${escapeHtml(oi.note)}</div>` : ""}
-      </td>
-      <td class="price">$${price.toFixed(2)}</td>
-      <td class="amount">$${lineTotal.toFixed(2)}</td>
-    </tr>`
-  }).join("")
-
-  const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Receipt #${String(order.order_id).padStart(4, "0")}</title>
-    <style>
-      @page {
-        margin: 0;
-        size: 80mm auto;
-      }
-      *, *::before, *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-      html, body {
-        width: 100%;
-        background: #ffffff;
-        color: #000000;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Kantumruy Pro", "Noto Sans Khmer", "Hanuman", "Courier New", monospace;
-        font-size: 11px;
-        line-height: 1.35;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
-      .ticket {
-        width: 74mm;
-        max-width: 100%;
-        margin: 0 auto;
-        padding: 10px 8px;
-      }
-      .header {
-        text-align: center;
-        margin-bottom: 8px;
-      }
-      .brand {
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-      }
-      .subbrand {
-        font-size: 11px;
-        font-weight: 600;
-        color: #333;
-      }
-      .loc {
-        font-size: 9px;
-        color: #666;
-        margin-top: 1px;
-      }
-      .divider {
-        border: none;
-        border-top: 1px dashed #777;
-        margin: 6px 0;
-      }
-      .queue-card {
-        border: 2px solid #000;
-        border-radius: 4px;
-        text-align: center;
-        padding: 4px 0;
-        margin: 6px 0;
-      }
-      .queue-label {
-        font-size: 9px;
-        font-weight: 700;
-        letter-spacing: 1px;
-      }
-      .queue-value {
-        font-size: 26px;
-        font-weight: 900;
-        line-height: 1;
-        margin-top: 2px;
-      }
-      .meta {
-        font-size: 10.5px;
-        line-height: 1.45;
-        margin-bottom: 4px;
-      }
-      .meta-row {
-        display: flex;
-        justify-content: space-between;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 6px 0;
-      }
-      th {
-        font-size: 9.5px;
-        font-weight: 700;
-        text-transform: uppercase;
-        border-bottom: 1px solid #000;
-        padding-bottom: 3px;
-      }
-      td {
-        padding: 3px 0;
-        vertical-align: top;
-      }
-      .qty {
-        width: 12%;
-        font-weight: 700;
-      }
-      .desc {
-        width: 50%;
-        padding-right: 4px;
-      }
-      .price {
-        width: 18%;
-        text-align: right;
-        color: #555;
-      }
-      .amount {
-        width: 20%;
-        text-align: right;
-        font-weight: 700;
-      }
-      .name {
-        font-weight: 600;
-        word-break: break-word;
-      }
-      .note {
-        font-size: 9px;
-        color: #555;
-        font-style: italic;
-        margin-top: 1px;
-      }
-      .totals {
-        margin-top: 4px;
-      }
-      .totals-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 2px 0;
-      }
-      .grand-total {
-        font-size: 14px;
-        font-weight: 900;
-        border-top: 1px dashed #777;
-        border-bottom: 1px dashed #777;
-        padding: 4px 0;
-        margin: 4px 0;
-      }
-      .riel-total {
-        font-size: 12px;
-        font-weight: 700;
-      }
-      .rate-note {
-        font-size: 9px;
-        color: #666;
-      }
-      .payment-status {
-        text-align: center;
-        border: 1px solid #000;
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 1.5px;
-        padding: 4px 0;
-        margin: 6px 0;
-      }
-      .foot {
-        text-align: center;
-        font-size: 9.5px;
-        color: #555;
-        margin-top: 8px;
-        line-height: 1.4;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="ticket">
-      <div class="header">
-        <div class="brand">ZOOM</div>
-        <div class="subbrand">Garden Café &amp; Wine</div>
-        <div class="loc">Sen Sok, Phnom Penh</div>
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">Garden Café &amp; Wine</div>
       </div>
-
-      ${order.queue_number != null ? `
-        <div class="queue-card">
-          <div class="queue-label">ORDER QUEUE NUMBER</div>
-          <div class="queue-value">#${order.queue_number}</div>
-        </div>
-      ` : ""}
-
-      <hr class="divider" />
-
-      <div class="meta">
-        <div class="meta-row">
-          <span><b>Order:</b> #${String(order.order_id).padStart(4, "0")}</span>
-          <span><b>Table:</b> ${order.table?.table_number ?? "—"}</span>
-        </div>
-        <div class="meta-row">
-          <span><b>Date:</b> ${dt}</span>
-          ${order.party_size ? `<span><b>Guests:</b> ${order.party_size}</span>` : ""}
-        </div>
-        ${order.note ? `<div><b>Note:</b> ${escapeHtml(order.note)}</div>` : ""}
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th style="text-align:left">Qty</th>
-            <th style="text-align:left">Item</th>
-            <th style="text-align:right">Price</th>
-            <th style="text-align:right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${lines}
-        </tbody>
-      </table>
-
-      <div class="totals">
-        <div class="totals-row grand-total">
-          <span>TOTAL (USD)</span>
-          <span>$${total.toFixed(2)}</span>
-        </div>
-        <div class="totals-row riel-total">
-          <span>TOTAL (KHR)</span>
-          <span>៛${khr.toLocaleString()}</span>
-        </div>
-        <div class="totals-row rate-note">
-          <span>Exchange Rate</span>
-          <span>$1.00 = ៛${KHR_RATE.toLocaleString()}</span>
-        </div>
-      </div>
-
-      <hr class="divider" />
-
-      ${isPaid ? `
-        <div class="payment-status">*** PAID ***</div>
-        <div class="meta-row" style="font-size:10.5px">
-          <span>Payment Method:</span>
-          <span><b>${escapeHtml(payment?.method?.method_name || "Completed")}</b></span>
-        </div>
-      ` : `
-        <div class="payment-status">*** UNPAID BILL ***</div>
-        <div style="text-align:center;font-size:9.5px;color:#555">
-          Please settle payment at cashier
-        </div>
-      `}
-
-      <div style="text-align:center;margin:10px 0 6px;padding:6px 0;border-top:1px dashed #777;border-bottom:1px dashed #777">
-        ${qrSvg ? `
-          <div style="display:flex;justify-content:center;margin-bottom:6px">
-            <div style="background:#fff;padding:4px;border:1px solid #111;border-radius:4px;display:inline-block">
-              ${qrSvg}
-            </div>
-          </div>
-        ` : ""}
-        <div style="display:flex;justify-content:center;overflow:hidden">
-          ${barcodeSvg}
-        </div>
-        <div style="font-size:8px;color:#555;margin-top:4px;letter-spacing:0.5px">
-          Scan barcode or QR code to lookup receipt
-        </div>
-      </div>
-
-      <hr class="divider" />
-
-      <div class="foot">
-        <div>Thank you for dining with us!</div>
-        <div>Please come again</div>
-        <div style="font-size:8.5px;color:#888;margin-top:3px">
-          Printed: ${new Date().toLocaleString("en-US", { dateStyle: "short", timeStyle: "medium" })}
-        </div>
-      </div>
+      <div style="font-size:9.5px;">St. 2011 (#85, St. 92), Krang Thnong, Sen Sok</div>
+      <div style="font-size:9.5px;">Phnom Penh · Tel: 010 770 686</div>
     </div>
-  </body>
-</html>`
 
-  executePrint(html)
+    <div class="divider-solid"></div>
+
+    <div class="meta-row">
+      <span>Receipt: <strong class="bold">${escapeHtml(orderCode)}</strong></span>
+      <span class="status-badge">${isPaid ? "PAID" : "BILL"}</span>
+    </div>
+    <div class="meta-row">
+      <span>Table: <strong class="bold">${escapeHtml(order.table?.table_number || "—")}</strong></span>
+      ${order.queue_number != null ? `<span>Queue: <strong class="bold">#${order.queue_number}</strong></span>` : `<span></span>`}
+    </div>
+    ${order.party_size != null
+      ? `<div class="meta-row"><span>Guests: ${order.party_size}</span><span></span></div>`
+      : ""
+    }
+    <div class="meta-row">
+      <span>Date: ${escapeHtml(dateStr)}</span>
+    </div>
+    ${order.user?.username
+      ? `<div class="meta-row"><span>Cashier: ${escapeHtml(order.user.username)}</span></div>`
+      : ""
+    }
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Item / មុខទំនិញ</th>
+          <th class="center" style="width:10mm;">Qty</th>
+          <th class="right" style="width:14mm;">Price</th>
+          <th class="right" style="width:15mm;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>TOTAL (USD)</span>
+      <span>$${totalUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>សរុបជាប្រាក់រៀល (KHR)</span>
+      <span>៛${totalKHR.toLocaleString()}</span>
+    </div>
+    <div class="meta-row" style="margin-top:4px;">
+      <span>Payment / ការទូទាត់:</span>
+      <span class="bold">${escapeHtml(paymentMethod)}</span>
+    </div>
+    <div class="meta-row">
+      <span>Exchange Rate:</span>
+      <span>$1 = ៛${KHR_RATE.toLocaleString()}</span>
+    </div>
+
+    ${order.note ? `<div class="divider"></div><div style="font-size:10px;">Note: ${escapeHtml(order.note)}</div>` : ""}
+
+    <div class="divider"></div>
+
+    <div class="barcode-wrap">
+      ${barcodeSvg}
+    </div>
+
+    <div class="center" style="margin-top:6px; font-size:9.5px;">
+      <div class="bold">សូមអរគុណ! Thank You &amp; See You Again!</div>
+      <div>Powered by ZOOM RMS</div>
+    </div>
+  `
+
+  openThermalPrintWindow(`Receipt ${orderCode}`, html)
 }
 
+// ============================================================================
+// 2. 80mm Cashier Daily Closing Slip (Z-Report on Thermal Roll)
+// ============================================================================
 export function printDailyReport({ date, displayDate, tableLabel, data }) {
-  if (!data || !data.orders) return
+  if (!data) return
+  const orders = data.orders || []
+  const totalOrders = data.summary?.total_orders ?? orders.length
+  const paidOrdersCount = data.summary?.paid_orders ?? orders.filter((o) => o.status === "Paid").length
+  const totalRevenueUSD = Number(
+    data.summary?.total_revenue ??
+    orders.filter((o) => o.status === "Paid").reduce((s, o) => s + orderTotal(o), 0)
+  )
+  const totalRevenueKHR = Math.round(totalRevenueUSD * KHR_RATE)
 
-  const rows = (data.orders || []).map(o => {
-    const total = o.order_items?.reduce((s, oi) => s + Number(oi.unit_price) * oi.quantity, 0) || 0
-    const khr = Math.round(total * KHR_RATE)
-    const pay = o.payments?.[0]?.method?.method_name || "—"
-    const time = new Date(o.order_date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    return `<tr>
-      <td style="font-weight:700">#${String(o.order_id).padStart(4, "0")}</td>
-      <td>${o.table?.table_number ?? "—"}</td>
-      <td>${time}</td>
-      <td><span class="badge ${o.status === "Paid" ? "badge-paid" : ""}">${o.status}</span></td>
-      <td style="text-align:center">${o.order_items?.length || 0}</td>
-      <td style="text-align:right;font-weight:700">$${total.toFixed(2)}</td>
-      <td style="text-align:right">៛${khr.toLocaleString()}</td>
-      <td>${pay}</td>
-    </tr>`
-  }).join("")
+  // Method breakdown
+  const methodMap = new Map()
+  for (const o of orders.filter((x) => x.status === "Paid")) {
+    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
+    const prev = methodMap.get(mName) || { count: 0, total: 0 }
+    prev.count += 1
+    prev.total += orderTotal(o)
+    methodMap.set(mName, prev)
+  }
 
-  const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Daily Sales Report — ${displayDate || date}</title>
-  <style>
-    @page { size: A4 portrait; margin: 15mm; }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #1a1a1a; padding: 20px; font-size: 12px; line-height: 1.4; background: #fff; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #059669; padding-bottom: 12px; margin-bottom: 16px; }
-    .brand { font-size: 22px; font-weight: 800; color: #059669; letter-spacing: -0.5px; }
-    .sub { font-size: 11px; color: #666; margin-top: 2px; }
-    .report-title { text-align: right; }
-    .report-title h2 { font-size: 16px; font-weight: 700; color: #111; }
-    .report-title p { font-size: 11px; color: #666; margin-top: 2px; }
-    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
-    .card-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-    .card-value { font-size: 18px; font-weight: 800; color: #0f172a; }
-    .card-value.primary { color: #059669; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th { background: #f1f5f9; color: #334155; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; text-align: left; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; }
-    td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11.5px; }
-    tr:nth-child(even) td { background: #fafafa; }
-    .badge { font-size: 9.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: #f1f5f9; color: #475569; }
-    .badge-paid { background: #ecfdf5; color: #059669; }
-    .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <div class="brand">ZOOM Garden Café &amp; Wine</div>
-      <div class="sub">Sen Sok, Phnom Penh · RMS Daily Audit</div>
-    </div>
-    <div class="report-title">
-      <h2>Daily Order &amp; Revenue Report</h2>
-      <p><b>${displayDate || date}</b>${tableLabel ? ` · Table ${tableLabel}` : " · All Tables"}</p>
-    </div>
-  </div>
+  const methodsHtml = Array.from(methodMap.entries())
+    .map(
+      ([name, info]) => `
+      <div class="meta-row">
+        <span>${escapeHtml(name)} (${info.count})</span>
+        <span class="bold">$${info.total.toFixed(2)}</span>
+      </div>
+    `
+    )
+    .join("")
 
-  <div class="summary-grid">
-    <div class="card">
-      <div class="card-label">Total Orders</div>
-      <div class="card-value">${data.summary.total_orders}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Paid Orders</div>
-      <div class="card-value primary">${data.summary.paid_orders}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Revenue (USD)</div>
-      <div class="card-value primary">$${Number(data.summary.total_revenue).toFixed(2)}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Revenue (KHR)</div>
-      <div class="card-value">៛${Math.round(Number(data.summary.total_revenue) * KHR_RATE).toLocaleString()}</div>
-    </div>
-  </div>
+  const orderRowsHtml = orders
+    .map((o) => {
+      const t = orderTotal(o)
+      const time = new Date(o.order_date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      return `
+        <tr>
+          <td>#${String(o.order_id).padStart(4, "0")}</td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td class="center">${escapeHtml(time)}</td>
+          <td class="right bold">$${t.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
 
-  <table>
-    <thead>
-      <tr>
-        <th>Order #</th>
-        <th>Table</th>
-        <th>Time</th>
-        <th>Status</th>
-        <th style="text-align:center">Items</th>
-        <th style="text-align:right">Total ($)</th>
-        <th style="text-align:right">Total (៛)</th>
-        <th>Paid Via</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows || `<tr><td colspan="8" style="text-align:center;padding:16px;color:#94a3b8">No orders for this date</td></tr>`}
-    </tbody>
-  </table>
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">DAILY CLOSING SLIP (Z-REPORT)</div>
+      </div>
+      <div style="font-size:10px;" class="bold">${escapeHtml(displayDate || date)}</div>
+      ${tableLabel ? `<div style="font-size:10px;">Table: ${escapeHtml(tableLabel)}</div>` : ""}
+    </div>
 
-  <div class="footer">
-    <div>ZOOM Garden Cafe &amp; Wine Management System</div>
-    <div>Generated: ${new Date().toLocaleString()}</div>
-  </div>
-</body>
-</html>`
+    <div class="divider-solid"></div>
 
-  executePrint(html)
+    <div class="meta-row">
+      <span>Total Orders:</span>
+      <span class="bold">${totalOrders}</span>
+    </div>
+    <div class="meta-row">
+      <span>Paid Orders:</span>
+      <span class="bold">${paidOrdersCount}</span>
+    </div>
+    <div class="meta-row">
+      <span>Unpaid / Open:</span>
+      <span class="bold">${totalOrders - paidOrdersCount}</span>
+    </div>
+
+    ${methodsHtml
+      ? `<div class="divider"></div>
+           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+           ${methodsHtml}`
+      : ""
+    }
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>REVENUE (USD)</span>
+      <span>$${totalRevenueUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>ចំណូលសរុប (KHR)</span>
+      <span>៛${totalRevenueKHR.toLocaleString()}</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th class="center">Tbl</th>
+          <th class="center">Time</th>
+          <th class="right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orderRowsHtml}
+      </tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+
+    <div style="margin-top:12px; font-size:10px;">
+      <div>Cashier Sign: _______________________</div>
+      <div style="margin-top:4px; font-size:9px;">Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+    </div>
+  `
+
+  openThermalPrintWindow(`Daily Report - ${date}`, html)
 }
 
-export function printExecutiveReport({ period, totalRevenue, paidOrders, avgOrderValue, periodOrders }) {
-  const rows = (periodOrders || []).map(o => {
-    const total = o.order_items?.reduce((s, oi) => s + Number(oi.unit_price) * oi.quantity, 0) || Number(o.total_price || 0)
-    const dt = new Date(o.order_date).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
-    const pay = o.payments?.[0]?.method?.method_name || "—"
-    return `<tr>
-      <td style="font-weight:700">#${String(o.order_id).padStart(4, "0")}</td>
-      <td>${o.table?.table_number ?? "—"}</td>
-      <td>${dt}</td>
-      <td><span class="badge ${o.status === "Paid" ? "badge-paid" : ""}">${o.status}</span></td>
-      <td style="text-align:center">${o.order_items?.length || 0}</td>
-      <td style="text-align:right;font-weight:700">$${total.toFixed(2)}</td>
-      <td>${pay}</td>
-    </tr>`
-  }).join("")
+// ============================================================================
+// 3. 80mm Executive / Period Sales Summary Slip
+// ============================================================================
+export function printExecutiveReport({
+  period = "Daily",
+  totalRevenue = 0,
+  paidOrders = [],
+  avgOrderValue = 0,
+  periodOrders = [],
+}) {
+  const revUSD = Number(totalRevenue || 0)
+  const revKHR = Math.round(revUSD * KHR_RATE)
 
-  const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Sales &amp; Revenue Report — ${period}</title>
-  <style>
-    @page { size: A4 portrait; margin: 15mm; }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #1a1a1a; padding: 20px; font-size: 12px; line-height: 1.4; background: #fff; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #059669; padding-bottom: 12px; margin-bottom: 16px; }
-    .brand { font-size: 22px; font-weight: 800; color: #059669; letter-spacing: -0.5px; }
-    .sub { font-size: 11px; color: #666; margin-top: 2px; }
-    .report-title { text-align: right; }
-    .report-title h2 { font-size: 16px; font-weight: 700; color: #111; }
-    .report-title p { font-size: 11px; color: #666; margin-top: 2px; }
-    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
-    .card-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-    .card-value { font-size: 18px; font-weight: 800; color: #0f172a; }
-    .card-value.primary { color: #059669; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th { background: #f1f5f9; color: #334155; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; text-align: left; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; }
-    td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11.5px; }
-    tr:nth-child(even) td { background: #fafafa; }
-    .badge { font-size: 9.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: #f1f5f9; color: #475569; }
-    .badge-paid { background: #ecfdf5; color: #059669; }
-    .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <div class="brand">ZOOM Garden Café &amp; Wine</div>
-      <div class="sub">Sen Sok, Phnom Penh · Executive Management Report</div>
-    </div>
-    <div class="report-title">
-      <h2>Sales &amp; Revenue Report</h2>
-      <p>Period: <b>${period}</b></p>
-    </div>
-  </div>
+  const methodMap = new Map()
+  for (const o of paidOrders) {
+    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
+    const prev = methodMap.get(mName) || { count: 0, total: 0 }
+    prev.count += 1
+    prev.total += orderTotal(o)
+    methodMap.set(mName, prev)
+  }
 
-  <div class="summary-grid">
-    <div class="card">
-      <div class="card-label">Total Revenue</div>
-      <div class="card-value primary">$${Number(totalRevenue).toFixed(2)}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Paid Orders</div>
-      <div class="card-value primary">${paidOrders.length}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Avg Order Value</div>
-      <div class="card-value">$${Number(avgOrderValue).toFixed(2)}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Total Period Orders</div>
-      <div class="card-value">${periodOrders.length}</div>
-    </div>
-  </div>
+  const methodsHtml = Array.from(methodMap.entries())
+    .map(
+      ([name, info]) => `
+      <div class="meta-row">
+        <span>${escapeHtml(name)} (${info.count})</span>
+        <span class="bold">$${info.total.toFixed(2)}</span>
+      </div>
+    `
+    )
+    .join("")
 
-  <table>
-    <thead>
-      <tr>
-        <th>Order #</th>
-        <th>Table</th>
-        <th>Date / Time</th>
-        <th>Status</th>
-        <th style="text-align:center">Items</th>
-        <th style="text-align:right">Total ($)</th>
-        <th>Payment</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows || `<tr><td colspan="7" style="text-align:center;padding:16px;color:#94a3b8">No orders for this period</td></tr>`}
-    </tbody>
-  </table>
+  const orderRowsHtml = periodOrders
+    .slice(0, 60)
+    .map((o) => {
+      const t = orderTotal(o)
+      return `
+        <tr>
+          <td>#${String(o.order_id).padStart(4, "0")}</td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td class="center">${escapeHtml(o.status)}</td>
+          <td class="right bold">$${t.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
 
-  <div class="footer">
-    <div>ZOOM Garden Cafe &amp; Wine Management System</div>
-    <div>Generated: ${new Date().toLocaleString()}</div>
-  </div>
-</body>
-</html>`
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">SALES SUMMARY REPORT</div>
+      </div>
+      <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
+    </div>
 
-  executePrint(html)
+    <div class="divider-solid"></div>
+
+    <div class="meta-row">
+      <span>Total Orders:</span>
+      <span class="bold">${periodOrders.length}</span>
+    </div>
+    <div class="meta-row">
+      <span>Paid Orders:</span>
+      <span class="bold">${paidOrders.length}</span>
+    </div>
+    <div class="meta-row">
+      <span>Avg Ticket:</span>
+      <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
+    </div>
+
+    ${methodsHtml
+      ? `<div class="divider"></div>
+           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+           ${methodsHtml}`
+      : ""
+    }
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>TOTAL (USD)</span>
+      <span>$${revUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>សរុប (KHR)</span>
+      <span>៛${revKHR.toLocaleString()}</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th class="center">Tbl</th>
+          <th class="center">Status</th>
+          <th class="right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orderRowsHtml}
+      </tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+    <div class="center" style="font-size:9px; margin-top:4px;">
+      Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
+    </div>
+  `
+
+  openThermalPrintWindow(`Sales Report - ${period}`, html)
 }
