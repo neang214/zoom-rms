@@ -12,6 +12,28 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState("")
 
+  // Masks password characters as "•" on a type="text" input so browsers
+  // (Chrome, Firefox, Safari, Edge) never trigger "Save Password?" on shared POS terminals.
+  const handlePasswordChange = (e) => {
+    setError("")
+    const val = e.target.value
+    if (showPass) {
+      setForm((f) => ({ ...f, password: val }))
+      return
+    }
+    const cursor = e.target.selectionStart ?? val.length
+    const inserted = val.replace(/•/g, "")
+    const start = Math.max(0, cursor - inserted.length)
+    const suffixLen = Math.max(0, val.length - cursor)
+
+    setForm((f) => {
+      const prev = f.password
+      const prefix = prev.slice(0, start)
+      const suffix = suffixLen > 0 ? prev.slice(prev.length - suffixLen) : ""
+      return { ...f, password: prefix + inserted + suffix }
+    })
+  }
+
   const handleSubmit = async (e) => {
     if (e) e.preventDefault()
     setError("")
@@ -23,7 +45,6 @@ export default function Login() {
 
     try {
       const res = await login({ username: form.username.trim(), password: form.password })
-      // In case authContext doesn't throw on failure, check if user is still not logged in
       const currentState = authContext.getState?.()
       if (res === false || (currentState && !currentState.user)) {
         const fallbackMsg =
@@ -107,11 +128,16 @@ export default function Login() {
             <p className="text-sm text-[var(--color-muted)] mt-1.5">{t("login.formSubtitle")}</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">{t("login.username")}</label>
               <input
                 type="text"
+                name="rms_staff_user"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 value={form.username}
                 onChange={e => { setForm(f => ({ ...f, username: e.target.value })); setError("") }}
                 placeholder="e.g. admin_zoom"
@@ -123,9 +149,14 @@ export default function Login() {
               <label className="text-xs font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">{t("login.password")}</label>
               <div className="relative">
                 <input
-                  type={showPass ? "text" : "password"}
-                  value={form.password}
-                  onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setError("") }}
+                  type="text"
+                  name="rms_staff_pin"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={showPass ? form.password : "•".repeat(form.password.length)}
+                  onChange={handlePasswordChange}
                   placeholder="••••••••"
                   className="w-full h-12 px-4 pr-12 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all duration-200 shadow-sm"
                 />
