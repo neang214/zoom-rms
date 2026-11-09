@@ -12,8 +12,6 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState("")
 
-  // Masks password characters as "•" on a type="text" input so browsers
-  // (Chrome, Firefox, Safari, Edge) never trigger "Save Password?" on shared POS terminals.
   const handlePasswordChange = (e) => {
     setError("")
     const val = e.target.value
@@ -38,15 +36,21 @@ export default function Login() {
     if (e) e.preventDefault()
     setError("")
 
-    if (!form.username.trim() || !form.password) {
+    const username = form.username.trim()
+    const password = form.password
+
+    if (!username || !password) {
       setError(t("login.enterBoth") || "Please enter both username and password.")
       return
     }
 
     try {
-      const res = await login({ username: form.username.trim(), password: form.password })
+      // Clear inputs immediately before auth transition so browser password managers see empty fields
+      setForm({ username: "", password: "" })
+      const res = await login({ username, password })
       const currentState = authContext.getState?.()
       if (res === false || (currentState && !currentState.user)) {
+        setForm({ username, password: "" })
         const fallbackMsg =
           currentState?.error ||
           res?.error ||
@@ -56,6 +60,7 @@ export default function Login() {
         setError(fallbackMsg)
       }
     } catch (err) {
+      setForm({ username, password: "" })
       const msg =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
@@ -63,6 +68,13 @@ export default function Login() {
         t("login.invalid") ||
         "Invalid username or password."
       setError(msg)
+    }
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !isLoading) {
+      e.preventDefault()
+      handleSubmit()
     }
   }
 
@@ -128,20 +140,23 @@ export default function Login() {
             <p className="text-sm text-[var(--color-muted)] mt-1.5">{t("login.formSubtitle")}</p>
           </div>
 
-          <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
+          {/* Non-form container + type="search" so browsers never trigger "Save password?" */}
+          <div onKeyDown={handleKeyDown} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">{t("login.username")}</label>
               <input
-                type="text"
-                name="rms_staff_user"
+                type="search"
+                name="q_staff_code"
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="none"
                 spellCheck={false}
+                data-lpignore="true"
+                data-form-type="other"
                 value={form.username}
                 onChange={e => { setForm(f => ({ ...f, username: e.target.value })); setError("") }}
                 placeholder="e.g. admin_zoom"
-                className="w-full h-12 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all duration-200 shadow-sm"
+                className="w-full h-12 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all duration-200 shadow-sm [&::-webkit-search-cancel-button]:hidden"
               />
             </div>
 
@@ -149,16 +164,18 @@ export default function Login() {
               <label className="text-xs font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">{t("login.password")}</label>
               <div className="relative">
                 <input
-                  type="text"
-                  name="rms_staff_pin"
+                  type="search"
+                  name="q_staff_token"
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
+                  data-lpignore="true"
+                  data-form-type="other"
                   value={showPass ? form.password : "•".repeat(form.password.length)}
                   onChange={handlePasswordChange}
                   placeholder="••••••••"
-                  className="w-full h-12 px-4 pr-12 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all duration-200 shadow-sm"
+                  className="w-full h-12 px-4 pr-12 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all duration-200 shadow-sm [&::-webkit-search-cancel-button]:hidden"
                 />
                 <button
                   type="button"
@@ -181,7 +198,8 @@ export default function Login() {
             )}
 
             <button
-              type="submit"
+              type="button"
+              onClick={handleSubmit}
               disabled={isLoading}
               className={cn(
                 "w-full h-12 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 mt-2 shadow-sm cursor-pointer",
@@ -199,7 +217,7 @@ export default function Login() {
                 </>
               )}
             </button>
-          </form>
+          </div>
 
         </div>
       </div>
