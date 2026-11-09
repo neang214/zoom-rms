@@ -52,31 +52,90 @@ function generateBarcodeSvg(value) {
   }
 }
 
-// Shared 80mm POS Thermal Printer CSS (72mm printable width, 0mm browser margins)
 const THERMAL_80MM_CSS = `
-  @page {
-    size: 80mm auto;
-    margin: 0mm;
-  }
   * {
     box-sizing: border-box;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
   html, body {
-    width: 80mm;
     margin: 0;
     padding: 0;
-    background: #ffffff;
-    color: #000000;
     font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
     font-size: 11px;
     line-height: 1.35;
+    color: #000000;
   }
-  .ticket {
-    width: 72mm;
-    margin: 0 auto;
-    padding: 3mm 1mm 6mm;
+  /* Screen preview styling (looks like an 80mm thermal paper roll on screen) */
+  @media screen {
+    body {
+      background: #1e293b;
+      padding: 48px 0 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .ticket {
+      width: 80mm;
+      background: #ffffff;
+      padding: 5mm 4mm 6mm;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      border-radius: 2px;
+    }
+    .preview-toolbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      background: #0f172a;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      color: #f8fafc;
+      font-size: 12px;
+      z-index: 50;
+    }
+    .preview-btn {
+      background: #059669;
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .preview-btn-close {
+      background: transparent;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+  }
+  /* Actual Print / PDF Output: Exact 80mm Width */
+  @media print {
+    html, body {
+      width: 80mm !important;
+      background: #ffffff !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .no-print {
+      display: none !important;
+    }
+    .ticket {
+      width: 72mm !important;
+      margin: 0 auto !important;
+      padding: 2mm 0 4mm !important;
+      box-shadow: none !important;
+    }
   }
   .center { text-align: center; }
   .right { text-align: right; }
@@ -172,7 +231,7 @@ const THERMAL_80MM_CSS = `
 `
 
 function openThermalPrintWindow(title, bodyHtml) {
-  const win = window.open("", "_blank", "width=360,height=640")
+  const win = window.open("", "_blank", "width=380,height=680")
   if (!win) {
     window.print()
     return
@@ -185,20 +244,43 @@ function openThermalPrintWindow(title, bodyHtml) {
         <title>${escapeHtml(title)}</title>
         <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;600;700&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
         <style>${THERMAL_80MM_CSS}</style>
+        <style id="dynamic-page-size">
+          @page { size: 80mm 200mm; margin: 0mm; }
+        </style>
       </head>
       <body>
-        <div class="ticket">
+        <div class="preview-toolbar no-print">
+          <span>🧾 80mm POS Thermal Receipt</span>
+          <div style="display:flex; gap:6px;">
+            <button class="preview-btn" onclick="window.print()">🖨️ Print</button>
+            <button class="preview-btn-close" onclick="window.close()">✕</button>
+          </div>
+        </div>
+        <div id="receipt-ticket" class="ticket">
           ${bodyHtml}
         </div>
+        <script>
+          function triggerThermalPrint() {
+            var ticket = document.getElementById('receipt-ticket');
+            if (ticket) {
+              // Convert pixel height to mm (1px ≈ 0.2646mm) so @page has two valid <length> values
+              var heightMm = Math.max(115, Math.ceil(ticket.offsetHeight * 0.2646) + 8);
+              var pageStyle = document.getElementById('dynamic-page-size');
+              if (pageStyle) {
+                pageStyle.textContent = '@page { size: 80mm ' + heightMm + 'mm; margin: 0mm; }';
+              }
+            }
+            window.focus();
+            window.print();
+          }
+          window.onload = function() {
+            setTimeout(triggerThermalPrint, 250);
+          };
+        </script>
       </body>
     </html>
   `)
   win.document.close()
-  win.focus()
-  setTimeout(() => {
-    win.print()
-    win.close()
-  }, 350)
 }
 
 // ============================================================================
@@ -334,7 +416,6 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
   )
   const totalRevenueKHR = Math.round(totalRevenueUSD * KHR_RATE)
 
-  // Method breakdown
   const methodMap = new Map()
   for (const o of orders.filter((x) => x.status === "Paid")) {
     const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
