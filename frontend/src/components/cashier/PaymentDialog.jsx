@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react"
-import { Check, QrCode, Loader2, X, CreditCard, Printer } from "lucide-react"
+import { Check, QrCode, Loader2, X, CreditCard, Printer, RefreshCw } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { cn, menuItemName } from "@/lib/utils"
 import { usePaymentStore } from "../../context/paymentContext"
@@ -28,7 +28,7 @@ function crc16ccitt(str) {
   return crc.toString(16).toUpperCase().padStart(4, "0")
 }
 
-// Pure JS MD5 (RFC 1321) to compute Bakong transaction MD5 hash for auto-polling
+// Pure JS MD5 (RFC 1321) to compute Bakong transaction MD5 hash
 function md5Hex(input) {
   function rotateLeft(lValue, iShiftBits) {
     return (lValue << iShiftBits) | (lValue >>> (32 - iShiftBits))
@@ -184,8 +184,8 @@ function tlv(tag, value) {
   return `${tag}${String(str.length).padStart(2, "0")}${str}`
 }
 
-// Builds valid Bakong KHQR for reaksmey_rin@bkrt (Reaksmey Rin)
-function buildReaksmeyKhqr({ currency = "KHR", totalUSD = 0, totalKHR = 0, orderId }) {
+// Builds Bakong KHQR for reaksmey_rin@bkrt (Reaksmey Rin) keeping exact tag structure so MD5 matches Bakong server
+function buildReaksmeyKhqr({ currency = "KHR", totalUSD = 0, totalKHR = 0 }) {
   if (currency === "STATIC") {
     return {
       qr: REAKSMEY_STATIC_KHQR,
@@ -197,17 +197,17 @@ function buildReaksmeyKhqr({ currency = "KHR", totalUSD = 0, totalKHR = 0, order
 
   const isKhr = currency === "KHR"
   const amountVal = isKhr ? Math.max(100, Math.round(totalKHR)) : Number(totalUSD.toFixed(2))
-  const amountStr = isKhr ? String(amountVal) : amountVal.toFixed(2)
+  const amountStr = isKhr ? String(amountVal) : String(amountVal)
 
   const nowMs = String(Date.now())
   const expMs = String(Date.now() + 10 * 60 * 1000)
 
-  // Tag 15 (UPI account routing from your QR) is supported on KHR (116)
+  // Keep the exact tags from Reaksmey Rin's KHQR + Tag 54 (Amount) + Tag 99 (Timestamp)
+  // Do NOT add Tag 62 (billTag) so the banking app's MD5 matches our MD5 100%!
   const upiTag = isKhr ? "15311974011600520446BONG10002312081" : ""
-  const accountTag = tlv("29", tlv("00", "reaksmey_rin@bkrt"))
-  const currencyTag = tlv("53", isKhr ? "116" : "840")
+  const accountTag = "29210017reaksmey_rin@bkrt"
+  const currencyTag = isKhr ? "5303116" : "5303840"
   const amountTag = tlv("54", amountStr)
-  const billTag = orderId ? tlv("62", tlv("01", `ORD-${orderId}`)) : ""
   const timestampTag = tlv("99", tlv("00", nowMs) + tlv("01", expMs))
 
   const payloadWithoutCrc =
@@ -219,9 +219,8 @@ function buildReaksmeyKhqr({ currency = "KHR", totalUSD = 0, totalKHR = 0, order
     currencyTag +
     amountTag +
     "5802KH" +
-    tlv("59", "Reaksmey Rin") +
-    tlv("60", "Phnom Penh") +
-    billTag +
+    "5912Reaksmey Rin" +
+    "6010Phnom Penh" +
     timestampTag +
     "6304"
 
@@ -250,6 +249,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
   const [khqrPaid, setKhqrPaid] = useState(false)
   const [khqrError, setKhqrError] = useState(null)
   const [khqrConfirming, setKhqrConfirming] = useState(false)
+  const [khqrCheckingNow, setKhqrCheckingNow] = useState(false)
   const [khqrCountdown, setKhqrCountdown] = useState(600)
 
   const khqrPollRef = useRef(null)
@@ -344,6 +344,30 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
     onCloseRef.current?.()
   }
 
+  const checkMd5Now = async (dataToCheck = khqrData, showFeedback = false) => {
+    if (!dataToCheck?.md5 || handledPaidRef.current) return
+    if (showFeedback) setKhqrCheckingNow(true)
+    try {
+      const check = await api.get(
+        `/payments/khqr/check/${dataToCheck.md5}?order_id=${order.order_id}&currency=${dataToCheck.currency}`
+      )
+      if (check.data?.paid) {
+        finishKhqrPayment()
+      } else if (check.data?.rate_limited) {
+        stopKhqrPolling()
+        setKhqrError(`Bakong API: ${check.data.reason || "Daily request limit (100/day) exceeded."}`)
+      } else if (showFeedback && check.data?.reason) {
+        setKhqrError(`Bakong status: ${check.data.reason}`)
+      }
+    } catch (err) {
+      if (showFeedback) {
+        setKhqrError(err?.response?.data?.message || "Payment not detected on Bakong yet.")
+      }
+    } finally {
+      if (showFeedback) setKhqrCheckingNow(false)
+    }
+  }
+
   const startKhqrSession = (curMode = khqrCurrency) => {
     stopKhqrPolling()
     setKhqrError(null)
@@ -355,37 +379,31 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
       currency: curMode,
       totalUSD: total,
       totalKHR,
-      orderId: order.order_id,
     })
     setKhqrData(generated)
 
-    let attempts = 0
-    const MAX_AUTO_CHECKS = 15
+    // Static QR does not have a per-order MD5 in Bakong
+    if (curMode !== "STATIC") {
+      let attempts = 0
+      const MAX_AUTO_CHECKS = 25
 
-    const pollCheck = async () => {
-      if (handledPaidRef.current || document.hidden) return
-      attempts += 1
-      if (attempts > MAX_AUTO_CHECKS) {
-        if (khqrPollRef.current) clearInterval(khqrPollRef.current)
-        khqrPollRef.current = null
-        return
-      }
-      try {
-        const check = await api.get(
-          `/payments/khqr/check/${generated.md5}?order_id=${order.order_id}&currency=${generated.currency}`
-        )
-        if (check.data?.paid) {
-          finishKhqrPayment()
+      const pollCheck = () => {
+        if (handledPaidRef.current || document.hidden) return
+        attempts += 1
+        if (attempts > MAX_AUTO_CHECKS) {
+          if (khqrPollRef.current) clearInterval(khqrPollRef.current)
+          khqrPollRef.current = null
+          return
         }
-      } catch {
-        // Ignore network/rate-limit errors during background check; manual confirm button is always available
+        checkMd5Now(generated, false)
       }
-    }
 
-    khqrDelayRef.current = setTimeout(() => {
-      pollCheck()
-      khqrPollRef.current = setInterval(pollCheck, 8000)
-    }, 10000)
+      // Start checking after 4s, then every 4s for fast auto-confirm
+      khqrDelayRef.current = setTimeout(() => {
+        pollCheck()
+        khqrPollRef.current = setInterval(pollCheck, 4000)
+      }, 4000)
+    }
 
     khqrCountdownRef.current = setInterval(() => {
       setKhqrCountdown(prev => {
@@ -497,7 +515,6 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Always show Cash/Card vs KHQR tabs */}
           <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--color-primary-muted)]/60 rounded-2xl">
             <button
               type="button"
@@ -682,14 +699,27 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--color-muted)] pt-1">
-                        <Loader2 size={12} className="animate-spin" /> {t("pay.waiting")} {Math.floor(khqrCountdown / 60)}:{String(khqrCountdown % 60).padStart(2, "0")}
+                      <div className="flex items-center justify-center gap-3 text-xs text-[var(--color-muted)] pt-1">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 size={12} className="animate-spin" /> {t("pay.waiting")} {Math.floor(khqrCountdown / 60)}:{String(khqrCountdown % 60).padStart(2, "0")}
+                        </span>
+                        {khqrCurrency !== "STATIC" && (
+                          <button
+                            type="button"
+                            onClick={() => checkMd5Now(khqrData, true)}
+                            disabled={khqrCheckingNow}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw size={12} className={cn(khqrCheckingNow && "animate-spin")} />
+                            Check Now
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {khqrError && (
-                    <div className="text-sm text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2 text-center">
+                    <div className="text-xs text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2 text-center">
                       {khqrError}
                     </div>
                   )}
