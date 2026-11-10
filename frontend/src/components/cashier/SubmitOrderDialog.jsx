@@ -1,4 +1,4 @@
-import { ShoppingCart, Check, Users, Plus, Minus } from "lucide-react"
+import { ShoppingCart, Check, Users, Plus, Minus, AlertCircle } from "lucide-react"
 import { cn, menuItemName, imageUrl } from "@/lib/utils"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui"
 import { ItemNoteRow } from "@/components/shared"
@@ -7,12 +7,13 @@ import { useLang } from "@/i18n/LanguageContext"
 const FALLBACK_IMG = "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=200&h=200&fit=crop"
 
 export default function SubmitOrderDialog({
-  open, onOpenChange, tables, tableId, onTableChange,
+  open, onOpenChange, tables, tableId, onTableChange, existingOrder,
   partySize, onPartySizeChange, note, onNoteChange,
   cartItems, onItemNoteChange, onIncrease, onDecrease,
   total, totalKHR, errorMsg, submitting, submitted, onConfirm,
 }) {
   const { t, lang } = useLang()
+  const existingItemCount = existingOrder?.order_items?.reduce((s, oi) => s + Number(oi.quantity || 0), 0) || 0
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
@@ -23,7 +24,7 @@ export default function SubmitOrderDialog({
           </div>
         </DialogHeader>
         <div className="space-y-3">
-          <Select value={tableId} onValueChange={onTableChange}>
+          <Select value={tableId} onValueChange={onTableChange} disabled={submitting || submitted}>
             <SelectTrigger><SelectValue placeholder={t("cashier.selectTable")} /></SelectTrigger>
             <SelectContent>
               {tables.map(tbl => (
@@ -33,6 +34,16 @@ export default function SubmitOrderDialog({
               ))}
             </SelectContent>
           </Select>
+
+          {existingOrder && (
+            <div className="flex items-start gap-2 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-accent-muted)] px-3 py-2 text-xs text-[var(--color-warning)]">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <div>
+                Active <span className="font-bold">Order #{String(existingOrder.order_id).padStart(4, "0")}</span> already has{" "}
+                <span className="font-bold">{existingItemCount} {existingItemCount === 1 ? "item" : "items"}</span>. These items will be added to it.
+              </div>
+            </div>
+          )}
 
           {}
           <div className="flex gap-2">
@@ -74,13 +85,13 @@ export default function SubmitOrderDialog({
                   </div>
                   {}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button type="button" onClick={() => onDecrease(item.menu_item_id)}
-                      className="w-6 h-6 rounded-full bg-[var(--color-danger-muted)] text-[var(--color-danger)] flex items-center justify-center">
+                    <button type="button" disabled={submitting || submitted} onClick={() => onDecrease(item.menu_item_id)}
+                      className="w-6 h-6 rounded-full bg-[var(--color-danger-muted)] text-[var(--color-danger)] flex items-center justify-center disabled:opacity-50">
                       <Minus size={11} />
                     </button>
                     <span className="text-xs font-bold w-4 text-center text-[var(--color-text)]">{item.qty}</span>
-                    <button type="button" onClick={() => onIncrease(item.menu_item_id)}
-                      className="w-6 h-6 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
+                    <button type="button" disabled={submitting || submitted} onClick={() => onIncrease(item.menu_item_id)}
+                      className="w-6 h-6 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center disabled:opacity-50">
                       <Plus size={11} />
                     </button>
                   </div>
@@ -96,8 +107,8 @@ export default function SubmitOrderDialog({
 
           <div className="bg-[var(--color-text)] text-white rounded-xl flex items-center justify-between px-4 py-3">
             <div className="text-sm font-bold">{t("common.total")}: ${total.toFixed(2)} <span className="text-[var(--color-primary)]">៛{totalKHR.toLocaleString()}</span></div>
-            <button onClick={onConfirm} disabled={submitting}
-              className={cn("font-semibold text-sm px-5 py-2 rounded-xl transition-all flex items-center gap-1.5", submitted ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)] hover:bg-[var(--color-danger)]", submitting && "opacity-60")}>
+            <button type="button" onClick={onConfirm} disabled={submitting || submitted}
+              className={cn("font-semibold text-sm px-5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", submitted ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)] hover:bg-[var(--color-danger)]", (submitting || submitted) && "opacity-60 cursor-not-allowed")}>
               {submitted ? <><Check size={14} /> {t("common.done")}</> : submitting ? t("cashier.submitting") : t("cashier.confirm")}
             </button>
           </div>

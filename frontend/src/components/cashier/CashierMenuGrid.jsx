@@ -46,6 +46,7 @@ function MenuItemCard({ item, qty, onAdd, onRemove, lang }) {
             <span className="text-[10px] text-[var(--color-danger)] font-medium">{t("common.unavailable")}</span>
           ) : qty === 0 ? (
             <button
+              type="button"
               onClick={() => onAdd(item.menu_item_id)}
               className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white flex items-center justify-center transition-all shadow-xs active:scale-95"
               title="Add to order"
@@ -55,6 +56,7 @@ function MenuItemCard({ item, qty, onAdd, onRemove, lang }) {
           ) : (
             <div className="flex items-center gap-1 bg-[var(--color-background)] rounded-xl p-0.5 border border-[var(--color-border)]">
               <button
+                type="button"
                 onClick={() => onRemove(item.menu_item_id)}
                 className="w-7 h-7 rounded-lg bg-[var(--color-surface)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white flex items-center justify-center transition-all shadow-xs"
               >
@@ -64,6 +66,7 @@ function MenuItemCard({ item, qty, onAdd, onRemove, lang }) {
                 {qty}
               </span>
               <button
+                type="button"
                 onClick={() => onAdd(item.menu_item_id)}
                 className="w-7 h-7 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] flex items-center justify-center transition-all shadow-xs"
               >

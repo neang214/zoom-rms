@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui"
 import { useMenuItemStore } from "../../context/menuItemContext"
@@ -6,6 +6,7 @@ import { useMenuCategoryStore } from "../../context/menuCategoryContext"
 import { useTableStore } from "../../context/tableContext"
 import { useOrderStore } from "../../context/orderContext"
 import { useOrderItemStore } from "../../context/orderItemContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import { MenuCategoryBar } from "@/components/admin/MenuParts"
 import CashierMenuGrid from "@/components/cashier/CashierMenuGrid"
@@ -35,12 +36,36 @@ export default function CashierMenu() {
   const [note, setNote] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+  const [existingTableOrder, setExistingTableOrder] = useState(null)
+  const submittingRef = useRef(false)
+
+  useSocketRole("cashier")
+  useSocketEvent("table:updated", () => fetchTables().catch(() => {}))
+  useSocketEvent("order:new", () => fetchTables().catch(() => {}))
+  useSocketEvent("order:deleted", () => fetchTables().catch(() => {}))
+  useSocketEvent("payment:completed", () => fetchTables().catch(() => {}))
 
   useEffect(() => {
     fetchItems()
     fetchCategories()
     fetchTables()
   }, [])
+
+  useEffect(() => {
+    if (!confirmOpen || !tableId) {
+      setExistingTableOrder(null)
+      return
+    }
+    let cancelled = false
+    getActiveOrderByTable(parseInt(tableId))
+      .then((ord) => {
+        if (!cancelled) setExistingTableOrder(ord || null)
+      })
+      .catch(() => {
+        if (!cancelled) setExistingTableOrder(null)
+      })
+    return () => { cancelled = true }
+  }, [confirmOpen, tableId])
 
   const availableItems = items.filter(i => i.available)
   const filtered = availableItems.filter(i => {
@@ -71,10 +96,14 @@ export default function CashierMenu() {
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0)
 
   const handleConfirm = async () => {
+    if (submittingRef.current || submitting || submitted) return
     if (!tableId) {
       setErrorMsg(t("cashier.selectTablePrompt"))
       return
     }
+    if (cartItems.length === 0) return
+
+    submittingRef.current = true
     setSubmitting(true)
     setErrorMsg("")
     try {
@@ -107,31 +136,36 @@ export default function CashierMenu() {
         }
       }
 
-      // add each cart item to the order
-      for (const item of cartItems) {
-        await addItem({
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          quantity: item.qty,
-          note: item.note || undefined,
-        })
-      }
+      // add all cart items to the order
+      await Promise.all(
+        cartItems.map((item) =>
+          addItem({
+            order_id: orderId,
+            menu_item_id: item.menu_item_id,
+            quantity: item.qty,
+            note: item.note || undefined,
+          })
+        )
+      )
 
       setSubmitted(true)
+      setSubmitting(false)
       // refresh tables since availability may have changed
       fetchTables()
       setTimeout(() => {
+        submittingRef.current = false
         setSubmitted(false)
         setCart({})
         setTableId("")
         setPartySize("")
         setNote("")
+        setExistingTableOrder(null)
         setConfirmOpen(false)
-      }, 1500)
+      }, 900)
     } catch (err) {
-      setErrorMsg(err?.response?.data?.message || t("cashier.submitFailed"))
-    } finally {
+      submittingRef.current = false
       setSubmitting(false)
+      setErrorMsg(err?.response?.data?.message || t("cashier.submitFailed"))
     }
   }
 
@@ -149,14 +183,18 @@ export default function CashierMenu() {
       <CashierMenuGrid items={filtered} cart={cart} onAdd={addToCart} onRemove={removeFromCart} />
 
       <CartBar total={total} totalKHR={totalKHR} count={cartCount}
-        onPlaceOrder={() => { setConfirmOpen(true); setErrorMsg("") }} />
+        onPlaceOrder={() => { fetchTables(); setConfirmOpen(true); setErrorMsg("") }} />
 
       <SubmitOrderDialog
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
+        onOpenChange={(v) => {
+          if (!v && (submitting || submitted || submittingRef.current)) return
+          setConfirmOpen(v)
+        }}
         tables={tables}
         tableId={tableId}
         onTableChange={setTableId}
+        existingOrder={existingTableOrder}
         partySize={partySize}
         onPartySizeChange={setPartySize}
         note={note}

@@ -366,18 +366,20 @@ export function ConfirmOrderDialog({ open, table, cartItems, onItemNoteChange, o
 
           <div className="flex gap-2.5">
             <button
+              type="button"
               onClick={onCancel}
-              disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-primary-muted)] text-sm font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer"
+              disabled={submitting || submitted}
+              className="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-primary-muted)] text-sm font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer disabled:opacity-50"
             >
               {t("common.cancel")}
             </button>
             <button
+              type="button"
               onClick={onConfirm}
-              disabled={submitting}
+              disabled={submitting || submitted}
               className={cn(
                 "flex-1 font-semibold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white",
-                submitting && "opacity-60"
+                (submitting || submitted) && "opacity-60 cursor-not-allowed"
               )}
             >
               {submitted ? <><Check size={14} /> {t("guest.orderPlaced")}</> : submitting ? t("guest.submitting") : t("guest.confirmOrder")}

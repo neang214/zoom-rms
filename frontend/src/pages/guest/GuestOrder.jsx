@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSearchParams, useNavigate } from "react-router-dom"
 import { useMenuItemStore } from "../../context/menuItemContext"
 import { useMenuCategoryStore } from "../../context/menuCategoryContext"
@@ -41,6 +41,7 @@ export default function GuestOrder() {
   const [note, setNote] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+  const submittingRef = useRef(false)
   const [table, setTable] = useState(null)
   const [loadingTable, setLoadingTable] = useState(true)
   const [tableError, setTableError] = useState(false)
@@ -140,6 +141,8 @@ export default function GuestOrder() {
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0)
 
   const handleConfirm = async () => {
+    if (submittingRef.current || submitting || submitted || cartItems.length === 0) return
+    submittingRef.current = true
     setSubmitting(true)
     setErrorMsg("")
     try {
@@ -174,31 +177,35 @@ export default function GuestOrder() {
         }
       }
 
-      for (const item of cartItems) {
-        await addItem({
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          quantity: item.qty,
-          note: item.note || undefined,
-          channel: "guest",
-          latitude: coords?.latitude,
-          longitude: coords?.longitude,
-        })
-      }
+      await Promise.all(
+        cartItems.map((item) =>
+          addItem({
+            order_id: orderId,
+            menu_item_id: item.menu_item_id,
+            quantity: item.qty,
+            note: item.note || undefined,
+            channel: "guest",
+            latitude: coords?.latitude,
+            longitude: coords?.longitude,
+          })
+        )
+      )
 
       setSubmitted(true)
+      setSubmitting(false)
       setLiveOrderStatus("Pending")
       setTimeout(() => {
+        submittingRef.current = false
         setSubmitted(false)
         setCart({})
         setPartySize("")
         setNote("")
         setConfirmOpen(false)
-      }, 1500)
+      }, 900)
     } catch (err) {
-      setErrorMsg(err?.response?.data?.message || t("guest.submitError"))
-    } finally {
+      submittingRef.current = false
       setSubmitting(false)
+      setErrorMsg(err?.response?.data?.message || t("guest.submitError"))
     }
   }
 
@@ -226,7 +233,7 @@ export default function GuestOrder() {
         submitting={submitting} submitted={submitted} queueNumber={queueNumber}
         partySize={partySize} onPartySizeChange={setPartySize}
         note={note} onNoteChange={setNote}
-        onCancel={() => setConfirmOpen(false)} onConfirm={handleConfirm}
+        onCancel={() => { if (!submitting && !submitted && !submittingRef.current) setConfirmOpen(false) }} onConfirm={handleConfirm}
       />
     </div>
   )

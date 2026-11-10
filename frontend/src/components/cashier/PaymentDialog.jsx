@@ -323,7 +323,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
 
   const total = orderTotal(order)
   const totalKHR = Math.round(total * KHR_RATE)
-  const itemCount = order.order_items?.reduce((s, oi) => s + oi.quantity, 0) || 0
+  const itemCount = order.order_items?.reduce((s, oi) => s + Number(oi.quantity || 0), 0) || 0
 
   const khqrMethod = paymentMethods.find(m => /khqr|aba|bakong/i.test(m.method_name))
   const normalMethods = paymentMethods.filter(m => m.method_id !== khqrMethod?.method_id)
