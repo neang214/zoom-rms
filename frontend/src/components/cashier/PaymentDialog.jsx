@@ -300,7 +300,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
       finishKhqrPayment()
     } catch (err) {
       const status = err?.response?.status
-      if (status === 409 || status === 400) {
+      if (status === 409) {
         finishKhqrPayment()
       } else {
         setKhqrError(err?.response?.data?.message || "Failed to confirm payment.")

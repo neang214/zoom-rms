@@ -355,7 +355,9 @@ export const checkKHQR = async (req, res) => {
         }
       }
 
-      if (bakongData.toAccountId && session.bakong_id) {
+      // ABA personal accounts may be reported by Bakong in a different format (e.g. account number),
+      // so only enforce the destination check for non-ABA Bakong IDs.
+      if (bakongData.toAccountId && session.bakong_id && !String(session.bakong_id).toLowerCase().endsWith("@abaa")) {
         if (String(bakongData.toAccountId).trim().toLowerCase() !== String(session.bakong_id).toLowerCase()) {
           return res.status(409).json({
             paid: false,
