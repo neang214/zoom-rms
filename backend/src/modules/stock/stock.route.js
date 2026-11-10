@@ -19,6 +19,18 @@ router.get(
   stockController.getLowStock,
 );
 router.get(
+  "/reports",
+  authenticate,
+  authorize("admin"),
+  stockController.getStockReports,
+);
+router.get(
+  "/movements",
+  authenticate,
+  authorize("admin"),
+  stockController.getStockMovements,
+);
+router.get(
   "/:id",
   authenticate,
   authorize("admin", "kitchen", "barista"),

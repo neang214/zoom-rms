@@ -54,7 +54,11 @@ export function sendTelegramMessage(text) {
 }
 
 export function stockUsedMessage(item, takenQty, role) {
-  const roleKh = role === "kitchen" ? "បុគ្គលិកផ្ទះបាយ" : "បារីស្តា"
+  const roleKh = role === "kitchen"
+    ? "បុគ្គលិកផ្ទះបាយ"
+    : role === "barista"
+      ? "បារីស្តា"
+      : "អ្នកគ្រប់គ្រង"
   return (
     `📦 <b>ការប្រើប្រាស់វត្ថុធាតុដើម</b> — Zoom Garden Café &amp; Wine\n\n` +
     `${roleKh} បានយក <b>${Number(takenQty).toFixed(2)} ${item.unit?.unit_name || ""}</b> នៃ <b>${item.item_name}</b>\n` +
