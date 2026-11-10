@@ -4,7 +4,7 @@ export const getAllPurchaseOrders = async (req, res) => {
     try {
         const purchaseOrders = await prisma.stockOrder.findMany({
             include: {
-                stock: { select: { item_name: true, unit: { select: { unit_name: true } } } },
+                stock: { select: { item_name: true } },
                 supplier: { select: { supplier_name: true } },
                 user: { select: { username: true } },
             },
@@ -32,7 +32,7 @@ export const getPurchaseOrder = async (req, res) => {
 };
 
 export const createPurchase = async (req, res) => {
-    const { invoice, quantity, stock_id, supplier_id, total_cost } = req.body;
+    const { invoice, quantity, stock_id, supplier_id } = req.body;
     const user_id = req.user?.userId || null;
 
     if (!quantity || !stock_id || !supplier_id) {
@@ -43,14 +43,8 @@ export const createPurchase = async (req, res) => {
         const parsedQuantity = parseFloat(quantity);
         const parsedStockId = parseInt(stock_id, 10);
         const parsedSupplierId = parseInt(supplier_id, 10);
-        const hasCost = total_cost !== undefined && total_cost !== null && String(total_cost).trim() !== "";
-        const parsedCost = hasCost ? parseFloat(total_cost) : null;
-
         if (isNaN(parsedQuantity) || parsedQuantity <= 0) {
             return res.status(400).json({ message: "Quantity must be a positive number" });
-        }
-        if (hasCost && (isNaN(parsedCost) || parsedCost < 0)) {
-            return res.status(400).json({ message: "Total cost must be a valid non-negative number" });
         }
         if (!Number.isInteger(parsedStockId) || parsedStockId <= 0 || !Number.isInteger(parsedSupplierId) || parsedSupplierId <= 0) {
             return res.status(400).json({ message: "Invalid stock or supplier ID" });
@@ -66,15 +60,14 @@ export const createPurchase = async (req, res) => {
 
         const purchaseOrder = await prisma.stockOrder.create({
             data: {
-                invoice: invoice && String(invoice).trim() ? String(invoice).trim() : null,
+                invoice,
                 quantity: parsedQuantity,
-                total_cost: parsedCost,
                 user_id,
                 stock_id: parsedStockId,
                 supplier_id: parsedSupplierId,
             },
             include: {
-                stock: { select: { item_name: true, unit: { select: { unit_name: true } } } },
+                stock: { select: { item_name: true } },
                 supplier: { select: { supplier_name: true } },
                 user: { select: { username: true } },
             },
@@ -94,10 +87,7 @@ export const updateStatus = async (req, res) => {
     }
 
     try {
-        const purchaseOrderId = parseInt(req.params.id, 10);
-        if (!Number.isInteger(purchaseOrderId) || purchaseOrderId <= 0) {
-            return res.status(400).json({ message: "Invalid purchase order ID" });
-        }
+        const purchaseOrderId = parseInt(req.params.id);
 
         await prisma.$transaction(async (tx) => {
             const order = await tx.stockOrder.findUnique({
@@ -108,32 +98,13 @@ export const updateStatus = async (req, res) => {
                 throw new Error("NOT_FOUND");
             }
 
+            
+            
             if (status === "Received" && order.status !== "Received") {
-                const updatedStock = await tx.stock.update({
+                await tx.stock.update({
                     where: { stock_id: order.stock_id },
                     data: { quantity: { increment: order.quantity } },
-                    select: { quantity: true },
                 });
-
-                await tx.stockOrder.update({
-                    where: { stock_order_id: purchaseOrderId },
-                    data: { status, received_at: new Date() },
-                });
-
-                await tx.stockMovement.create({
-                    data: {
-                        stock_id: order.stock_id,
-                        user_id: req.user?.userId || order.user_id || null,
-                        stock_order_id: order.stock_order_id,
-                        type: "PO_RECEIVED",
-                        quantity_change: order.quantity,
-                        balance_after: updatedStock.quantity,
-                        note: order.invoice
-                            ? `PO #${order.stock_order_id} (${order.invoice})`
-                            : `PO #${order.stock_order_id}`,
-                    },
-                });
-                return;
             }
 
             await tx.stockOrder.update({

@@ -354,8 +354,6 @@ export function StockOrdersCard({ stockOrders = [], isLoading, onNewOrder, onUpd
                 <TableHead>{t("stock.stockItem")}</TableHead>
                 <TableHead>{t("stock.supplier")}</TableHead>
                 <TableHead>{t("stock.quantity")}</TableHead>
-                <TableHead>{t("stock.totalCost")}</TableHead>
-                <TableHead>{t("stock.poDate")}</TableHead>
                 <TableHead>{t("stock.placedBy")}</TableHead>
                 <TableHead>{t("stock.status")}</TableHead>
                 <TableHead>{t("common.actions")}</TableHead>
@@ -368,15 +366,7 @@ export function StockOrdersCard({ stockOrders = [], isLoading, onNewOrder, onUpd
                   <TableCell className="text-[var(--color-muted)]">{po.invoice || "—"}</TableCell>
                   <TableCell className="font-medium">{po.stock?.item_name || `#${po.stock_id}`}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{po.supplier?.supplier_name || `#${po.supplier_id}`}</TableCell>
-                  <TableCell className="font-semibold">
-                    {Number(po.quantity)} {po.stock?.unit?.unit_name || ""}
-                  </TableCell>
-                  <TableCell className="text-[var(--color-text)] font-medium">
-                    {po.total_cost != null ? `$${Number(po.total_cost).toFixed(2)}` : "—"}
-                  </TableCell>
-                  <TableCell className="text-xs text-[var(--color-muted)]">
-                    {po.created_at ? new Date(po.created_at).toLocaleDateString("en-GB") : "—"}
-                  </TableCell>
+                  <TableCell className="font-semibold">{Number(po.quantity)}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{po.user?.username || "—"}</TableCell>
                   <TableCell>
                     <Badge variant={statusBadge[po.status] || "outline"}>{po.status}</Badge>
@@ -411,7 +401,7 @@ export function StockOrdersCard({ stockOrders = [], isLoading, onNewOrder, onUpd
               ))}
               {stockOrders.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center text-sm text-[var(--color-muted)] py-8">
+                  <TableCell colSpan={8} className="text-center text-sm text-[var(--color-muted)] py-8">
                     {t("stock.noPos")}
                   </TableCell>
                 </TableRow>
@@ -460,29 +450,15 @@ export function StockOrderDialog({ open, onClose, form, setForm, stockItems = []
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>{t("stock.qtyToOrder")}</Label>
-              <Input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={form.quantity}
-                onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-                placeholder="e.g. 10"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t("stock.costOptional")}</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.total_cost}
-                onChange={e => setForm(f => ({ ...f, total_cost: e.target.value }))}
-                placeholder="$0.00"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label>{t("stock.qtyToOrder")}</Label>
+            <Input
+              type="number"
+              min="1"
+              value={form.quantity}
+              onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+              placeholder="e.g. 10"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>{t("stock.invoiceRef")}</Label>

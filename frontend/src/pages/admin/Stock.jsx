@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react"
-import { Link } from "react-router-dom"
 import { useLang } from "@/i18n/LanguageContext"
 import { cn, deleteErrorMessage } from "@/lib/utils"
-import { Plus, Package, Truck, BarChart3 } from "lucide-react"
+import { Plus, Package, Truck } from "lucide-react"
 import { Button } from "@/components/ui"
 import { useStockStore } from "../../context/stockContext"
 import { useUnitStore } from "../../context/unitContext"
@@ -48,7 +47,7 @@ export default function Stock() {
 
   // Purchase Order state
   const [poOpen, setPoOpen] = useState(false)
-  const [poForm, setPoForm] = useState({ stock_id: "", supplier_id: "", quantity: "", total_cost: "", invoice: "" })
+  const [poForm, setPoForm] = useState({ stock_id: "", supplier_id: "", quantity: "", invoice: "" })
   const [poError, setPoError] = useState("")
   const [poSaving, setPoSaving] = useState(false)
   const [updatingPoId, setUpdatingPoId] = useState(null)
@@ -253,7 +252,6 @@ export default function Stock() {
       stock_id: stockItems[0]?.stock_id || "",
       supplier_id: suppliers[0]?.supplier_id || "",
       quantity: "",
-      total_cost: "",
       invoice: "",
     })
     setPoError("")
@@ -272,7 +270,6 @@ export default function Stock() {
         stock_id: parseInt(poForm.stock_id),
         supplier_id: parseInt(poForm.supplier_id),
         quantity: parseFloat(poForm.quantity),
-        total_cost: poForm.total_cost !== "" ? parseFloat(poForm.total_cost) : undefined,
         invoice: poForm.invoice || undefined,
       })
       await fetchStockOrders()
@@ -304,22 +301,15 @@ export default function Stock() {
         title={t("stock.title")}
         subtitle={t("stock.subtitle")}
         action={
-          <div className="flex items-center gap-2 flex-wrap">
-            <Link to="/admin/reports?tab=stock">
-              <Button variant="outline" className="gap-2">
-                <BarChart3 size={15} /> {t("stock.viewReports")}
-              </Button>
-            </Link>
-            {activeTab === "inventory" ? (
-              <Button onClick={openAdd} className="gap-2">
-                <Plus size={15} /> {t("stock.addItem")}
-              </Button>
-            ) : (
-              <Button onClick={openNewPo} className="gap-2">
-                <Plus size={15} /> {t("stock.newPo")}
-              </Button>
-            )}
-          </div>
+          activeTab === "inventory" ? (
+            <Button onClick={openAdd} className="gap-2">
+              <Plus size={15} /> {t("stock.addItem")}
+            </Button>
+          ) : (
+            <Button onClick={openNewPo} className="gap-2">
+              <Plus size={15} /> {t("stock.newPo")}
+            </Button>
+          )
         }
       />
 

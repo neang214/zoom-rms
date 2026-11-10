@@ -4,8 +4,6 @@ import api from "../services/axios";
 export const useStockStore = create((set, get) => ({
   stockItems: [],
   lowStock: [],
-  stockReport: null,
-  reportLoading: false,
   isLoading: false,
   error: null,
 
@@ -95,22 +93,6 @@ export const useStockStore = create((set, get) => ({
       await get().fetchStock();
       return res.data;
     } catch (error) {
-      throw error;
-    }
-  },
-
-  fetchStockReports: async ({ from, to, stock_type } = {}) => {
-    set({ reportLoading: true, error: null });
-    try {
-      const params = {};
-      if (from) params.from = from;
-      if (to) params.to = to;
-      if (stock_type && stock_type !== "all") params.stock_type = stock_type;
-      const res = await api.get("/stock/reports", { params });
-      set({ stockReport: res.data, reportLoading: false });
-      return res.data;
-    } catch (error) {
-      set({ error: error?.response?.data?.message || error.message, reportLoading: false });
       throw error;
     }
   },

@@ -52,14 +52,6 @@ enum StockOrderStatus {
   Received
 }
 
-enum StockMovementType {
-  INITIAL
-  RESTOCK
-  USAGE
-  PO_RECEIVED
-  ADJUSTMENT
-}
-
 // ============================================================
 // USERS
 // ============================================================
@@ -78,7 +70,6 @@ model User {
   orders          Order[]
   payments        Payment[]
   stock_orders    StockOrder[]
-  stock_movements StockMovement[]
 
   @@index([deleted_at])
   @@map("users")
@@ -297,9 +288,8 @@ model Stock {
   last_updated DateTime  @updatedAt
 
   // Relations
-  unit            Unit            @relation(fields: [unit_id], references: [unit_id])
-  stock_orders    StockOrder[]
-  stock_movements StockMovement[]
+  unit         Unit         @relation(fields: [unit_id], references: [unit_id])
+  stock_orders StockOrder[]
 
   @@map("stock")
 }
@@ -307,54 +297,24 @@ model Stock {
 // ============================================================
 // STOCK ORDERS
 // status: Pending → Ordered → Received
-// On Received: increments Stock.quantity and records movement
+// On Received: admin manually updates stock quantity
 // ============================================================
 
 model StockOrder {
   stock_order_id Int              @id @default(autoincrement())
   invoice        String?          @db.VarChar(100)
   quantity       Decimal          @db.Decimal(10, 2)
-  total_cost     Decimal?         @db.Decimal(10, 2)
   status         StockOrderStatus @default(Pending)
   user_id        Int
   stock_id       Int
   supplier_id    Int
-  created_at     DateTime         @default(now())
-  received_at    DateTime?
 
   // Relations
-  user            User            @relation(fields: [user_id], references: [user_id])
-  stock           Stock           @relation(fields: [stock_id], references: [stock_id])
-  supplier        Supplier        @relation(fields: [supplier_id], references: [supplier_id])
-  stock_movements StockMovement[]
+  user     User     @relation(fields: [user_id], references: [user_id])
+  stock    Stock    @relation(fields: [stock_id], references: [stock_id])
+  supplier Supplier @relation(fields: [supplier_id], references: [supplier_id])
 
-  @@index([created_at, status])
   @@map("stock_orders")
-}
-
-// ============================================================
-// STOCK MOVEMENTS (Audit Log for Stock Reports)
-// ============================================================
-
-model StockMovement {
-  movement_id     Int               @id @default(autoincrement())
-  stock_id        Int
-  user_id         Int?
-  stock_order_id  Int?
-  type            StockMovementType
-  quantity_change Decimal           @db.Decimal(10, 2)
-  balance_after   Decimal           @db.Decimal(10, 2)
-  note            String?           @db.VarChar(255)
-  created_at      DateTime          @default(now())
-
-  // Relations
-  stock       Stock       @relation(fields: [stock_id], references: [stock_id], onDelete: Cascade)
-  user        User?       @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
-  stock_order StockOrder? @relation(fields: [stock_order_id], references: [stock_order_id], onDelete: SetNull)
-
-  @@index([stock_id, created_at])
-  @@index([created_at, type])
-  @@map("stock_movements")
 }
 
 // ============================================================
