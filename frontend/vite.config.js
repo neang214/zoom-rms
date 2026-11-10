@@ -3,12 +3,9 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
+const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || "http://localhost:8080";
+
 export default defineConfig({
-    server: {
-        port: 3000,
-        strictPort: true, // Optional: fails instead of auto-switching if port 3000 is busy
-        host: "0.0.0.0", // Optional: exposes server to your local network
-    },
     plugins: [react(), tailwindcss()],
     resolve: {
         alias: {
@@ -16,6 +13,8 @@ export default defineConfig({
         },
     },
     server: {
+        port: 3000,
+        strictPort: true, // Optional: fails instead of auto-switching if port 3000 is busy
         host: true, // listen on the network, not just localhost — needed to
         // reach the dev server from a phone on the same WiFi
         allowedHosts: [
@@ -32,15 +31,15 @@ export default defineConfig({
             // talks to this same origin for everything, and Vite quietly
             // relays it to the backend behind the scenes.
             "/api": {
-                target: "https://zoom-rms-backend.onrender.com",
+                target: devProxyTarget,
                 changeOrigin: true,
             },
             "/uploads": {
-                target: "https://zoom-rms-backend.onrender.com",
+                target: devProxyTarget,
                 changeOrigin: true,
             },
             "/socket.io": {
-                target: "https://zoom-rms-backend.onrender.com",
+                target: devProxyTarget,
                 ws: true, // required for Socket.IO's websocket upgrade
                 changeOrigin: true,
             },

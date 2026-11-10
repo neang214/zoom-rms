@@ -1,10 +1,48 @@
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { BakongKHQR, khqrData, IndividualInfo } from "bakong-khqr";
 import prisma from "../../utils/db.js";
 import { getIO } from "../../sockets/index.js";
 
 const KHR_RATE = 4100;
+const KHQR_TTL_MS = 10 * 60 * 1000;
+const KHQR_CHECK_GRACE_MS = 60 * 1000;
 const DEFAULT_ABA_P2P_TAG = "40600006abaP2P011237977D9FDA2D020960057996403095005369110404Dual";
+const DEFAULT_REAKSMEY_UPI_ACCOUNT = "1974011600520446BONG10002312081";
+
+// Tracks server-issued dynamic KHQR sessions keyed by normalized lowercase MD5
+const khqrSessions = new Map();
+
+function pruneExpiredSessions(now = Date.now()) {
+  for (const [key, session] of khqrSessions.entries()) {
+    if (now > session.expires_at + KHQR_CHECK_GRACE_MS) {
+      khqrSessions.delete(key);
+    }
+  }
+}
+
+function getKhqrSessionSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error("JWT_SECRET not configured");
+  }
+  return secret;
+}
+
+function computeOrderTotalUSD(order) {
+  return order.order_items.reduce(
+    (sum, item) => sum + item.quantity * Number(item.unit_price),
+    0
+  );
+}
+
+function normalizeBakongCurrency(cur) {
+  if (cur == null) return null;
+  const val = String(cur).trim().toUpperCase();
+  if (val === "840" || val === "USD") return "USD";
+  if (val === "116" || val === "KHR") return "KHR";
+  return val;
+}
 
 function computeCRC16(str) {
   let crc = 0xffff;
@@ -21,17 +59,93 @@ function computeCRC16(str) {
   return crc.toString(16).toUpperCase().padStart(4, "0");
 }
 
+function buildIndividualOptionalData({ bakongId, currencyMode, amount, expiresAt }) {
+  const isUsd = currencyMode === "USD";
+  const isStatic = currencyMode === "STATIC";
+  const isAba = bakongId.endsWith("@abaa");
+
+  const envAccount = process.env[isUsd ? "KHQR_BAKONG_ID_USD" : "KHQR_BAKONG_ID_KHR"]?.trim();
+  const accountInformation = isAba
+    ? envAccount || (isUsd ? "500536911" : "600579964")
+    : envAccount && envAccount !== bakongId
+      ? envAccount
+      : undefined;
+
+  const envAcquiringBank = process.env.KHQR_ACQUIRING_BANK?.trim();
+  const acquiringBank = isAba
+    ? envAcquiringBank || "ABA Bank"
+    : accountInformation && envAcquiringBank
+      ? envAcquiringBank
+      : undefined;
+
+  // bakong-khqr only allows Tag 15 (UPI) with KHR (116), never with USD (840)
+  const upiDefault = bakongId === "reaksmey_rin@bkrt" ? DEFAULT_REAKSMEY_UPI_ACCOUNT : "";
+  const upiMerchantAccount = !isUsd
+    ? (process.env.KHQR_UPI_MERCHANT ?? upiDefault).trim() || undefined
+    : undefined;
+
+  return {
+    currency: isUsd ? khqrData.currency.usd : khqrData.currency.khr,
+    ...(isStatic ? {} : { amount, expirationTimestamp: expiresAt }),
+    ...(accountInformation ? { accountInformation } : {}),
+    ...(acquiringBank ? { acquiringBank } : {}),
+    ...(upiMerchantAccount ? { upiMerchantAccount } : {}),
+  };
+}
+
+function resolveKhqrSession(normalizedMd5, parsedOrderId, rawToken) {
+  pruneExpiredSessions();
+  const memSession = khqrSessions.get(normalizedMd5);
+
+  let tokenSession = null;
+  if (rawToken) {
+    try {
+      const decoded = jwt.verify(String(rawToken), getKhqrSessionSecret());
+      if (decoded?.type === "khqr_session") {
+        tokenSession = decoded;
+      }
+    } catch {
+      return { errorStatus: 400, message: "KHQR session token is invalid or expired. Please generate a new QR code." };
+    }
+  }
+
+  const session = tokenSession || memSession;
+  if (!session) {
+    return { errorStatus: 400, message: "KHQR session not found or expired. Please generate a new QR code." };
+  }
+
+  if (memSession && tokenSession && (memSession.order_id !== tokenSession.order_id || memSession.md5 !== tokenSession.md5)) {
+    return { errorStatus: 400, message: "KHQR session mismatch. Please generate a new QR code." };
+  }
+
+  if (Number(session.order_id) !== parsedOrderId || String(session.md5).toLowerCase() !== normalizedMd5) {
+    return { errorStatus: 403, message: "This KHQR code does not belong to the requested order." };
+  }
+
+  if (!session.expires_at || Date.now() > Number(session.expires_at) + KHQR_CHECK_GRACE_MS) {
+    khqrSessions.delete(normalizedMd5);
+    return { errorStatus: 400, message: "KHQR code expired. Please generate a new QR code." };
+  }
+
+  return { session };
+}
+
 export const generateKHQR = async (req, res) => {
-  const { order_id, currency = "USD" } = req.body;
+  const { order_id, currency = "KHR" } = req.body;
+  const parsedOrderId = parseInt(order_id, 10);
+  const currencyMode = String(currency || "KHR").trim().toUpperCase();
 
-  console.log(`[KHQR] generateKHQR — order_id=${order_id} currency=${currency}`);
+  console.log(`[KHQR] generateKHQR — order_id=${order_id} currency=${currencyMode}`);
 
-  if (!order_id)
-    return res.status(400).json({ message: "order_id is required" });
+  if (!Number.isInteger(parsedOrderId) || parsedOrderId <= 0)
+    return res.status(400).json({ message: "Valid order_id is required" });
+
+  if (!["USD", "KHR", "STATIC"].includes(currencyMode))
+    return res.status(400).json({ message: "currency must be USD, KHR, or STATIC" });
 
   try {
     const order = await prisma.order.findUnique({
-      where: { order_id: parseInt(order_id) },
+      where: { order_id: parsedOrderId },
       include: {
         order_items: true,
         payments: { where: { status: "Completed" } },
@@ -39,70 +153,111 @@ export const generateKHQR = async (req, res) => {
     });
 
     if (!order) return res.status(404).json({ message: "Order not found" });
-    if (order.payments.length > 0)
-      return res.status(409).json({ message: "This order has already been paid" });
+    if (order.payments.length > 0 || order.status === "Paid")
+      return res.status(409).json({ message: "This order has already been paid", already_paid: true });
     if (order.confirmed === false)
       return res.status(400).json({ message: "Order must be confirmed before it can be paid" });
 
-    const totalUSD = order.order_items.reduce(
-      (sum, item) => sum + item.quantity * Number(item.unit_price), 0
-    );
+    const totalUSD = computeOrderTotalUSD(order);
+    if (totalUSD <= 0)
+      return res.status(400).json({ message: "Order total must be greater than zero" });
 
-    const isusd = currency.toUpperCase() === "USD";
-    const amount = isusd
-      ? parseFloat(totalUSD.toFixed(2))
-      : Math.round(totalUSD * KHR_RATE);
+    const totalKHR = Math.max(100, Math.round(totalUSD * KHR_RATE));
+    const bakongId = (process.env.BAKONG_ACCOUNT_ID || "abaakhppxxx@abaa").trim();
+    const merchantName = (process.env.KHQR_MERCHANT_NAME || "NEANG NEN").trim();
+    const merchantCity = (process.env.KHQR_MERCHANT_CITY || "Phnom Penh").trim();
 
-    const bakongId = process.env.BAKONG_ACCOUNT_ID || "abaakhppxxx@abaa";
-    const accountNumber = process.env[isusd ? "KHQR_BAKONG_ID_USD" : "KHQR_BAKONG_ID_KHR"] || (isusd ? "500536911" : "600579964");
+    if (currencyMode === "STATIC") {
+      const envStaticQr = process.env.KHQR_STATIC_QR?.trim();
+      let staticQr = envStaticQr;
 
-    console.log(`[KHQR] bakongId=${bakongId} accountNumber=${accountNumber} amount=${amount} ${currency}`);
+      if (!staticQr) {
+        const optionalData = buildIndividualOptionalData({
+          bakongId,
+          currencyMode: "STATIC",
+        });
+        const info = new IndividualInfo(bakongId, merchantName, merchantCity, optionalData);
+        const result = new BakongKHQR().generateIndividual(info);
+        if (result.status.code !== 0)
+          return res.status(500).json({ message: "Failed to generate Static KHQR", detail: result.status.message });
+        staticQr = result.data.qr;
+      }
 
-    if (!accountNumber)
-      return res.status(500).json({ message: `KHQR_BAKONG_ID_${currency.toUpperCase()} not set in .env` });
+      return res.json({
+        qr: staticQr,
+        md5: null,
+        amount: totalKHR,
+        currency: "KHR",
+        mode: "STATIC",
+        is_static: true,
+        order_id: parsedOrderId,
+        merchant_name: merchantName,
+        bakong_id: bakongId,
+        expires_at: Date.now() + KHQR_TTL_MS,
+      });
+    }
 
-    // Personal ABA KHQR must NOT include commercial POS Tag 62 (billNumber/storeLabel/terminalLabel)
-    const optionalData = {
-      currency: isusd ? khqrData.currency.usd : khqrData.currency.khr,
-      amount,
-      expirationTimestamp: Date.now() + 10 * 60 * 1000,
-      accountInformation: accountNumber,
-      acquiringBank: "ABA Bank",
-    };
+    const isUsd = currencyMode === "USD";
+    const amount = isUsd ? parseFloat(totalUSD.toFixed(2)) : totalKHR;
+    const expiresAt = Date.now() + KHQR_TTL_MS;
 
-    const info = new IndividualInfo(
+    const optionalData = buildIndividualOptionalData({
       bakongId,
-      process.env.KHQR_MERCHANT_NAME || "NEANG NEN",
-      process.env.KHQR_MERCHANT_CITY || "Phnom Penh",
-      optionalData
-    );
+      currencyMode,
+      amount,
+      expiresAt,
+    });
 
-    const khqr = new BakongKHQR();
-    const result = khqr.generateIndividual(info);
+    const info = new IndividualInfo(bakongId, merchantName, merchantCity, optionalData);
+    const result = new BakongKHQR().generateIndividual(info);
 
     if (result.status.code !== 0)
       return res.status(500).json({ message: "Failed to generate KHQR", detail: result.status.message });
 
     let finalQr = result.data.qr;
-    let finalMd5 = result.data.md5;
+    let finalMd5 = String(result.data.md5).toLowerCase();
 
     // Inject ABA Tag 40 (abaP2P) required by ABA Mobile for personal dual-currency accounts
     const abaP2PTag = (process.env.KHQR_ABA_P2P_TAG ?? DEFAULT_ABA_P2P_TAG).trim();
     if (bakongId === "abaakhppxxx@abaa" && abaP2PTag && finalQr.includes("52045999")) {
       const qrWithoutCrcValue = finalQr.slice(0, -4).replace("52045999", `${abaP2PTag}52045999`);
       finalQr = qrWithoutCrcValue + computeCRC16(qrWithoutCrcValue);
-      finalMd5 = crypto.createHash("md5").update(finalQr).digest("hex");
+      finalMd5 = crypto.createHash("md5").update(finalQr).digest("hex").toLowerCase();
     }
 
-    console.log(`[KHQR] result: code=${result.status.code} md5=${finalMd5} qr=${finalQr}`);
+    const sessionPayload = {
+      order_id: parsedOrderId,
+      md5: finalMd5,
+      amount,
+      total_usd: parseFloat(totalUSD.toFixed(2)),
+      currency: currencyMode,
+      bakong_id: bakongId,
+      expires_at: expiresAt,
+    };
+
+    pruneExpiredSessions();
+    khqrSessions.set(finalMd5, sessionPayload);
+
+    const khqrToken = jwt.sign(
+      { type: "khqr_session", ...sessionPayload },
+      getKhqrSessionSecret(),
+      { expiresIn: "15m" }
+    );
+
+    console.log(`[KHQR] bakongId=${bakongId} amount=${amount} ${currencyMode} md5=${finalMd5}`);
 
     res.json({
       qr: finalQr,
       md5: finalMd5,
       amount,
-      currency: currency.toUpperCase(),
-      order_id: parseInt(order_id),
-      expires_at: Date.now() + 10 * 60 * 1000,
+      currency: currencyMode,
+      mode: currencyMode,
+      is_static: false,
+      order_id: parsedOrderId,
+      merchant_name: merchantName,
+      bakong_id: bakongId,
+      expires_at: expiresAt,
+      khqr_token: khqrToken,
     });
   } catch (error) {
     console.error("[KHQR] generateKHQR error:", error);
@@ -111,20 +266,63 @@ export const generateKHQR = async (req, res) => {
 };
 
 export const checkKHQR = async (req, res) => {
-  const { md5 } = req.params;
-  const { order_id } = req.query;
+  const normalizedMd5 = String(req.params.md5 || "").trim().toLowerCase();
+  const parsedOrderId = parseInt(req.query.order_id, 10);
+  const rawToken = req.query.token || req.headers["x-khqr-token"];
 
-  if (!md5 || !order_id)
-    return res.status(400).json({ message: "md5 and order_id are required" });
+  if (!/^[a-f0-9]{32}$/.test(normalizedMd5) || !Number.isInteger(parsedOrderId) || parsedOrderId <= 0)
+    return res.status(400).json({ message: "Valid md5 and order_id are required" });
+
+  const { session, errorStatus, message } = resolveKhqrSession(normalizedMd5, parsedOrderId, rawToken);
+  if (errorStatus) {
+    return res.status(errorStatus).json({ paid: false, message });
+  }
 
   const token = process.env.BAKONG_TOKEN;
   if (!token)
     return res.json({ paid: false, token_missing: true, reason: "BAKONG_TOKEN not configured on server — use manual confirm" });
 
-  const parsedOrderId = parseInt(order_id);
-
   try {
-    const bakongRes = await checkBakongMD5(md5, token);
+    // Short-circuit before calling Bakong if this MD5 or order is already settled
+    const [existingRef, preOrder] = await Promise.all([
+      prisma.payment.findUnique({ where: { external_ref: normalizedMd5 } }),
+      prisma.order.findUnique({
+        where: { order_id: parsedOrderId },
+        include: {
+          order_items: true,
+          payments: { where: { status: "Completed" } },
+        },
+      }),
+    ]);
+
+    if (existingRef) {
+      if (existingRef.order_id === parsedOrderId) {
+        return res.json({ paid: true, already_processed: true });
+      }
+      return res.status(409).json({
+        paid: false,
+        message: "This KHQR transaction reference has already been used for another order.",
+      });
+    }
+
+    if (!preOrder) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (preOrder.payments.length > 0 || preOrder.status === "Paid") {
+      return res.json({ paid: true, already_processed: true });
+    }
+
+    const currentTotalUSD = parseFloat(computeOrderTotalUSD(preOrder).toFixed(2));
+    if (Math.abs(currentTotalUSD - Number(session.total_usd)) > 0.01) {
+      return res.status(409).json({
+        paid: false,
+        qr_stale: true,
+        message: "Order items changed after QR generation. Please generate a new QR code.",
+      });
+    }
+
+    const bakongRes = await checkBakongMD5(normalizedMd5, token);
     if (!bakongRes.paid) {
       return res.json({
         paid: false,
@@ -133,6 +331,38 @@ export const checkKHQR = async (req, res) => {
         ...(bakongRes.blocked ? { ip_blocked: true } : {}),
         ...(bakongRes.authError ? { auth_error: true } : {}),
       });
+    }
+
+    // Validate Bakong's reported transaction details against the generated KHQR session
+    const bakongData = bakongRes.data;
+    if (bakongData) {
+      const paidCurrency = normalizeBakongCurrency(bakongData.currency);
+      if (paidCurrency && paidCurrency !== session.currency) {
+        return res.status(409).json({
+          paid: false,
+          message: `KHQR currency mismatch: expected ${session.currency}, got ${paidCurrency}.`,
+        });
+      }
+
+      if (bakongData.amount !== undefined && bakongData.amount !== null) {
+        const paidAmount = Number(bakongData.amount);
+        const tolerance = session.currency === "USD" ? 0.011 : 1;
+        if (!Number.isFinite(paidAmount) || Math.abs(paidAmount - Number(session.amount)) > tolerance) {
+          return res.status(409).json({
+            paid: false,
+            message: `KHQR amount mismatch: expected ${session.amount} ${session.currency}, got ${bakongData.amount}.`,
+          });
+        }
+      }
+
+      if (bakongData.toAccountId && session.bakong_id) {
+        if (String(bakongData.toAccountId).trim().toLowerCase() !== String(session.bakong_id).toLowerCase()) {
+          return res.status(409).json({
+            paid: false,
+            message: "KHQR destination account does not match the merchant account.",
+          });
+        }
+      }
     }
 
     let khqrMethod = await prisma.paymentMethod.findFirst({ where: { method_name: "KHQR" } });
@@ -144,6 +374,19 @@ export const checkKHQR = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       // Serialize concurrent payment attempts for this order
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${parsedOrderId})`;
+
+      const existingInTx = await tx.payment.findUnique({
+        where: { external_ref: normalizedMd5 },
+      });
+      if (existingInTx) {
+        if (existingInTx.order_id === parsedOrderId) {
+          const paidOrder = await tx.order.findUnique({ where: { order_id: parsedOrderId } });
+          return { already_processed: true, order: paidOrder };
+        }
+        const err = new Error("MD5_ALREADY_USED");
+        err.statusCode = 409;
+        throw err;
+      }
 
       const order = await tx.order.findUnique({
         where: { order_id: parsedOrderId },
@@ -163,9 +406,7 @@ export const checkKHQR = async (req, res) => {
         return { already_processed: true, order };
       }
 
-      const totalAmount = order.order_items.reduce(
-        (sum, item) => sum + item.quantity * Number(item.unit_price), 0
-      );
+      const totalAmount = computeOrderTotalUSD(order);
 
       const createdPayment = await tx.payment.create({
         data: {
@@ -174,7 +415,7 @@ export const checkKHQR = async (req, res) => {
           user_id: req.user?.userId || cashier?.user_id || 1,
           amount: totalAmount,
           status: "Completed",
-          external_ref: md5 ? String(md5).slice(0, 100) : null,
+          external_ref: normalizedMd5.slice(0, 100),
         },
       });
 
@@ -205,8 +446,14 @@ export const checkKHQR = async (req, res) => {
     res.json({ paid: true, order_id: parsedOrderId });
   } catch (error) {
     if (error.statusCode === 404) return res.status(404).json({ message: "Order not found" });
-    if (error.code === "P2002") // duplicate external_ref
-      return res.json({ paid: true, already_processed: true });
+    if (error.statusCode === 409) return res.status(409).json({ paid: false, message: "This KHQR transaction reference has already been used for another order." });
+    if (error.code === "P2002") {
+      const existingRef = await prisma.payment.findUnique({ where: { external_ref: normalizedMd5 } });
+      if (existingRef && existingRef.order_id === parsedOrderId) {
+        return res.json({ paid: true, already_processed: true });
+      }
+      return res.status(409).json({ paid: false, message: "This KHQR transaction reference has already been used for another order." });
+    }
     console.error("[KHQR] checkKHQR error:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
