@@ -42,19 +42,11 @@ export default function PaymentsReport() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">
-          {t("nav.payments")}
-        </h1>
-        <p className="text-sm text-[var(--color-muted)] mt-0.5">
-          {t("reports.filterSales")}
-        </p>
+        <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">{t("nav.payments")}</h1>
+        <p className="text-sm text-[var(--color-muted)] mt-0.5">{t("reports.filterSales")}</p>
       </div>
 
-      <PaymentStats
-        orders={orders}
-        todaysPayments={todaysPayments}
-        todaysRevenue={todaysRevenue}
-      />
+      <PaymentStats orders={orders} todaysPayments={todaysPayments} todaysRevenue={todaysRevenue} />
 
       <ReportBuilder
         activePeriod={activePeriod}
@@ -65,7 +57,7 @@ export default function PaymentsReport() {
         setCustomTo={setCustomTo}
         orders={orders}
         ordersLoading={ordersLoading}
-        printSize="thermal"
+        printFormat="thermal"
       />
     </div>
   )

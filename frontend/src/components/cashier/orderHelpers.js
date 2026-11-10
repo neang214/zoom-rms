@@ -169,142 +169,13 @@ const THERMAL_80MM_CSS = `
   }
 `
 
-// ============================================================================
-// Shared A4 Portrait Executive CSS (For Admin Reports)
-// ============================================================================
-const A4_REPORT_CSS = `
-  @page {
-    size: A4 portrait;
-    margin: 12mm;
-  }
-  * {
-    box-sizing: border-box;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #ffffff;
-    color: #0f172a;
-    font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .a4-container {
-    width: 100%;
-    max-width: 186mm;
-    margin: 0 auto;
-  }
-  .a4-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    border-bottom: 2px solid #059669;
-    padding-bottom: 12px;
-    margin-bottom: 16px;
-  }
-  .a4-brand {
-    border: 2px solid #059669;
-    border-radius: 10px;
-    padding: 6px 14px;
-    text-align: center;
-  }
-  .a4-brand-title {
-    font-size: 22px;
-    font-weight: 900;
-    color: #059669;
-    letter-spacing: 2px;
-    line-height: 1;
-  }
-  .a4-brand-sub {
-    font-size: 10px;
-    color: #334155;
-    font-weight: 600;
-    margin-top: 2px;
-  }
-  .a4-kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    margin-bottom: 16px;
-  }
-  .a4-kpi-card {
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    padding: 10px 12px;
-    background: #f8fafc;
-  }
-  .a4-kpi-card.highlight {
-    background: #ecfdf5;
-    border-color: #059669;
-  }
-  .a4-kpi-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    color: #64748b;
-    font-weight: 700;
-  }
-  .a4-kpi-val {
-    font-size: 18px;
-    font-weight: 800;
-    color: #0f172a;
-    margin-top: 2px;
-  }
-  .a4-kpi-card.highlight .a4-kpi-val {
-    color: #059669;
-  }
-  .a4-kpi-sub {
-    font-size: 10px;
-    color: #64748b;
-    margin-top: 2px;
-  }
-  .a4-section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #0f172a;
-    margin: 14px 0 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .a4-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-  }
-  .a4-table th {
-    background: #059669;
-    color: #ffffff;
-    font-weight: 700;
-    text-transform: uppercase;
-    font-size: 10px;
-    padding: 7px 8px;
-    border: 1px solid #047857;
-    text-align: left;
-  }
-  .a4-table td {
-    padding: 6px 8px;
-    border: 1px solid #cbd5e1;
-  }
-  .a4-table tr:nth-child(even) td {
-    background: #f8fafc;
-  }
-  .a4-table tfoot td {
-    background: #ecfdf5;
-    font-weight: 800;
-    border: 1px solid #059669;
-    padding: 8px;
-  }
-  .text-right { text-align: right !important; }
-  .text-center { text-align: center !important; }
-`
-
+// Prints 80mm thermal slip inside a hidden iframe (for Cashier)
 function printThermalReceiptHtml(title, bodyHtml) {
-  const existing = document.getElementById("zoom-print-iframe")
+  const existing = document.getElementById("zoom-thermal-print-iframe")
   if (existing) existing.remove()
 
   const iframe = document.createElement("iframe")
-  iframe.id = "zoom-print-iframe"
+  iframe.id = "zoom-thermal-print-iframe"
   iframe.style.position = "fixed"
   iframe.style.right = "0"
   iframe.style.bottom = "0"
@@ -357,12 +228,13 @@ function printThermalReceiptHtml(title, bodyHtml) {
   }, 150)
 }
 
-function printA4ReportHtml(title, bodyHtml) {
-  const existing = document.getElementById("zoom-print-iframe")
+// Prints full A4 document inside a hidden iframe (for Admin)
+function printA4DocumentHtml(title, bodyHtml) {
+  const existing = document.getElementById("zoom-a4-print-iframe")
   if (existing) existing.remove()
 
   const iframe = document.createElement("iframe")
-  iframe.id = "zoom-print-iframe"
+  iframe.id = "zoom-a4-print-iframe"
   iframe.style.position = "fixed"
   iframe.style.right = "0"
   iframe.style.bottom = "0"
@@ -381,12 +253,136 @@ function printA4ReportHtml(title, bodyHtml) {
       <head>
         <meta charset="UTF-8" />
         <title>${escapeHtml(title)}</title>
-        <style>${A4_REPORT_CSS}</style>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 14mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          body {
+            font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 1.45;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #059669;
+            padding-bottom: 14px;
+            margin-bottom: 18px;
+          }
+          .brand-card {
+            border: 2px solid #059669;
+            border-radius: 10px;
+            padding: 6px 14px;
+            text-align: center;
+          }
+          .brand-name {
+            font-size: 22px;
+            font-weight: 900;
+            color: #059669;
+            letter-spacing: 2px;
+            line-height: 1;
+          }
+          .brand-sub {
+            font-size: 10px;
+            color: #334155;
+            font-weight: 600;
+            margin-top: 3px;
+          }
+          .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 18px;
+          }
+          .kpi-box {
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: #f8fafc;
+          }
+          .kpi-box.primary {
+            background: #ecfdf5;
+            border-color: #059669;
+          }
+          .kpi-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #64748b;
+            font-weight: 700;
+          }
+          .kpi-val {
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 3px;
+          }
+          .kpi-box.primary .kpi-val {
+            color: #059669;
+          }
+          .kpi-sub {
+            font-size: 10px;
+            color: #64748b;
+            margin-top: 2px;
+          }
+          h3 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #0f172a;
+            margin: 16px 0 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th {
+            background: #059669;
+            color: #ffffff;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 7px 8px;
+            text-align: left;
+            border: 1px solid #047857;
+          }
+          td {
+            padding: 6px 8px;
+            border: 1px solid #cbd5e1;
+            font-size: 11px;
+          }
+          tr:nth-child(even) td {
+            background: #f8fafc;
+          }
+          tfoot td {
+            background: #ecfdf5 !important;
+            font-weight: 800;
+            border-color: #059669;
+          }
+          .right { text-align: right; }
+          .center { text-align: center; }
+          .footer {
+            margin-top: 28px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #475569;
+          }
+        </style>
       </head>
       <body>
-        <div class="a4-container">
-          ${bodyHtml}
-        </div>
+        ${bodyHtml}
       </body>
     </html>
   `)
@@ -405,7 +401,7 @@ function printA4ReportHtml(title, bodyHtml) {
 }
 
 // ============================================================================
-// 1. 80mm Customer Receipt (Cashier / Admin Order Receipt)
+// 1. Cashier: 80mm Customer Receipt (Bill / Tax Invoice)
 // ============================================================================
 export function printOrderReceipt(order) {
   if (!order) return
@@ -524,7 +520,7 @@ export function printOrderReceipt(order) {
 }
 
 // ============================================================================
-// 2. 80mm Cashier Daily Closing Slip (Z-Report on Thermal Roll)
+// 2. Cashier: 80mm Daily Closing Slip (Z-Report on Thermal Roll)
 // ============================================================================
 export function printDailyReport({ date, displayDate, tableLabel, data }) {
   if (!data) return
@@ -643,17 +639,14 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
 }
 
 // ============================================================================
-// 3. Sales Report:
-//    - format === "thermal" (Cashier) -> 80mm Thermal Roll
-//    - format === "a4"      (Admin)   -> Full A4 Portrait Executive Report
+// 3. Cashier: 80mm Period Summary Slip (For Cashier Payment & Report Page)
 // ============================================================================
-export function printExecutiveReport({
+export function printThermalReport({
   period = "Daily",
   totalRevenue = 0,
   paidOrders = [],
   avgOrderValue = 0,
   periodOrders = [],
-  format = "a4",
 }) {
   const revUSD = Number(totalRevenue || 0)
   const revKHR = Math.round(revUSD * KHR_RATE)
@@ -667,221 +660,241 @@ export function printExecutiveReport({
     methodMap.set(mName, prev)
   }
 
-  // Cashier 80mm Thermal Summary Slip
-  if (format === "thermal") {
-    const methodsHtml = Array.from(methodMap.entries())
-      .map(
-        ([name, info]) => `
-        <div class="meta-row">
-          <span>${escapeHtml(name)} (${info.count})</span>
-          <span class="bold">$${info.total.toFixed(2)}</span>
-        </div>
-      `
-      )
-      .join("")
-
-    const orderRowsHtml = periodOrders
-      .slice(0, 60)
-      .map((o) => {
-        const t = orderTotal(o)
-        return `
-          <tr>
-            <td>#${String(o.order_id).padStart(4, "0")}</td>
-            <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
-            <td class="center">${escapeHtml(o.status)}</td>
-            <td class="right bold">$${t.toFixed(2)}</td>
-          </tr>
-        `
-      })
-      .join("")
-
-    const thermalHtml = `
-      <div class="center">
-        <div class="brand-box">
-          <div class="brand-title">ZOOM</div>
-          <div class="brand-sub">CASHIER SALES REPORT</div>
-        </div>
-        <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
-      </div>
-
-      <div class="divider-solid"></div>
-
-      <div class="meta-row">
-        <span>Total Orders:</span>
-        <span class="bold">${periodOrders.length}</span>
-      </div>
-      <div class="meta-row">
-        <span>Paid Orders:</span>
-        <span class="bold">${paidOrders.length}</span>
-      </div>
-      <div class="meta-row">
-        <span>Avg Ticket:</span>
-        <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
-      </div>
-
-      ${methodsHtml
-        ? `<div class="divider"></div>
-             <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
-             ${methodsHtml}`
-        : ""
-      }
-
-      <div class="divider-solid"></div>
-
-      <div class="total-row">
-        <span>TOTAL (USD)</span>
-        <span>$${revUSD.toFixed(2)}</span>
-      </div>
-      <div class="khr-row">
-        <span>សរុប (KHR)</span>
-        <span>៛${revKHR.toLocaleString()}</span>
-      </div>
-
-      <div class="divider"></div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Order</th>
-            <th class="center">Tbl</th>
-            <th class="center">Status</th>
-            <th class="right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${orderRowsHtml}
-        </tbody>
-      </table>
-
-      <div class="divider-solid"></div>
-      <div class="center" style="font-size:9px; margin-top:4px;">
-        Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
-      </div>
-    `
-
-    printThermalReceiptHtml(`Cashier Report - ${period}`, thermalHtml)
-    return
-  }
-
-  // Admin Full A4 Portrait Executive Report
-  const itemsSold = paidOrders.reduce(
-    (sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0),
-    0
-  )
-
-  const a4MethodRows = Array.from(methodMap.entries())
+  const methodsHtml = Array.from(methodMap.entries())
     .map(
       ([name, info]) => `
-      <tr>
-        <td><strong>${escapeHtml(name)}</strong></td>
-        <td class="text-center">${info.count}</td>
-        <td class="text-right"><strong>$${info.total.toFixed(2)}</strong></td>
-        <td class="text-right">៛${Math.round(info.total * KHR_RATE).toLocaleString()}</td>
-      </tr>
+      <div class="meta-row">
+        <span>${escapeHtml(name)} (${info.count})</span>
+        <span class="bold">$${info.total.toFixed(2)}</span>
+      </div>
     `
     )
     .join("")
 
-  const a4OrderRows = periodOrders
+  const orderRowsHtml = periodOrders
+    .slice(0, 60)
     .map((o) => {
       const t = orderTotal(o)
-      const count = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
-      const method = o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
       return `
         <tr>
-          <td><strong>ORD-${String(o.order_id).padStart(4, "0")}</strong></td>
-          <td class="text-center">${escapeHtml(o.table?.table_number || "—")}</td>
-          <td>${escapeHtml(new Date(o.order_date).toLocaleString("en-GB"))}</td>
-          <td class="text-center">${count}</td>
-          <td>${escapeHtml(method)}</td>
-          <td class="text-center">${escapeHtml(o.status)}</td>
-          <td class="text-right"><strong>$${t.toFixed(2)}</strong></td>
-          <td class="text-right">៛${Math.round(t * KHR_RATE).toLocaleString()}</td>
+          <td>#${String(o.order_id).padStart(4, "0")}</td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td class="center">${escapeHtml(o.status)}</td>
+          <td class="right bold">$${t.toFixed(2)}</td>
         </tr>
       `
     })
     .join("")
 
-  const a4Html = `
-    <div class="a4-header">
-      <div class="a4-brand">
-        <div class="a4-brand-title">ZOOM</div>
-        <div class="a4-brand-sub">Garden Café &amp; Wine · Sen Sok</div>
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">CASHIER SALES SLIP</div>
       </div>
-      <div style="text-align:right;">
+      <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <div class="meta-row">
+      <span>Total Orders:</span>
+      <span class="bold">${periodOrders.length}</span>
+    </div>
+    <div class="meta-row">
+      <span>Paid Orders:</span>
+      <span class="bold">${paidOrders.length}</span>
+    </div>
+    <div class="meta-row">
+      <span>Avg Ticket:</span>
+      <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
+    </div>
+
+    ${methodsHtml
+      ? `<div class="divider"></div>
+           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+           ${methodsHtml}`
+      : ""
+    }
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>TOTAL (USD)</span>
+      <span>$${revUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>សរុប (KHR)</span>
+      <span>៛${revKHR.toLocaleString()}</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th class="center">Tbl</th>
+          <th class="center">Status</th>
+          <th class="right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orderRowsHtml}
+      </tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+    <div class="center" style="font-size:9px; margin-top:4px;">
+      Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
+    </div>
+  `
+
+  printThermalReceiptHtml(`Cashier Report - ${period}`, html)
+}
+
+// ============================================================================
+// 4. Admin: Full A4 Executive Sales Report (For Admin Reports Page)
+// ============================================================================
+export function printExecutiveReport({
+  period = "Daily",
+  totalRevenue = 0,
+  paidOrders = [],
+  avgOrderValue = 0,
+  periodOrders = [],
+}) {
+  const revUSD = Number(totalRevenue || 0)
+  const revKHR = Math.round(revUSD * KHR_RATE)
+  const totalItems = paidOrders.reduce(
+    (sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0),
+    0
+  )
+
+  const methodMap = new Map()
+  for (const o of paidOrders) {
+    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
+    const prev = methodMap.get(mName) || { count: 0, total: 0 }
+    prev.count += 1
+    prev.total += orderTotal(o)
+    methodMap.set(mName, prev)
+  }
+
+  const methodsRows = Array.from(methodMap.entries())
+    .map(
+      ([name, info]) => `
+      <tr>
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td class="center">${info.count}</td>
+        <td class="right"><strong>$${info.total.toFixed(2)}</strong></td>
+        <td class="right">៛${Math.round(info.total * KHR_RATE).toLocaleString()}</td>
+      </tr>
+    `
+    )
+    .join("")
+
+  const orderRowsHtml = periodOrders
+    .map((o) => {
+      const t = orderTotal(o)
+      const itemsCount = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
+      const method = o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
+      return `
+        <tr>
+          <td><strong>ORD-${String(o.order_id).padStart(4, "0")}</strong></td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td>${escapeHtml(new Date(o.order_date).toLocaleString("en-GB"))}</td>
+          <td class="center">${itemsCount}</td>
+          <td>${escapeHtml(method)}</td>
+          <td class="center">${escapeHtml(o.status)}</td>
+          <td class="right"><strong>$${t.toFixed(2)}</strong></td>
+          <td class="right">៛${Math.round(t * KHR_RATE).toLocaleString()}</td>
+        </tr>
+      `
+    })
+    .join("")
+
+  const html = `
+    <div class="header">
+      <div class="brand-card">
+        <div class="brand-name">ZOOM</div>
+        <div class="brand-sub">Garden Café &amp; Wine · Sen Sok</div>
+      </div>
+      <div class="right">
         <div style="font-size:18px; font-weight:800; color:#0f172a;">EXECUTIVE SALES REPORT</div>
-        <div style="font-size:12px; font-weight:600; color:#059669; margin-top:2px;">Period: ${escapeHtml(period)}</div>
+        <div style="font-size:12px; color:#059669; font-weight:700; margin-top:2px;">Period: ${escapeHtml(period)}</div>
         <div style="font-size:10px; color:#64748b; margin-top:2px;">Generated: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
       </div>
     </div>
 
-    <div class="a4-kpi-grid">
-      <div class="a4-kpi-card highlight">
-        <div class="a4-kpi-label">Paid Revenue (USD)</div>
-        <div class="a4-kpi-val">$${revUSD.toFixed(2)}</div>
-        <div class="a4-kpi-sub">៛${revKHR.toLocaleString()} KHR</div>
+    <div class="kpi-grid">
+      <div class="kpi-box primary">
+        <div class="kpi-label">Total Revenue (USD)</div>
+        <div class="kpi-val">$${revUSD.toFixed(2)}</div>
+        <div class="kpi-sub">៛${revKHR.toLocaleString()} KHR</div>
       </div>
-      <div class="a4-kpi-card">
-        <div class="a4-kpi-label">Paid Orders</div>
-        <div class="a4-kpi-val">${paidOrders.length}</div>
-        <div class="a4-kpi-sub">of ${periodOrders.length} total orders</div>
+      <div class="kpi-box">
+        <div class="kpi-label">Paid Orders</div>
+        <div class="kpi-val">${paidOrders.length} / ${periodOrders.length}</div>
+        <div class="kpi-sub">Completed Transactions</div>
       </div>
-      <div class="a4-kpi-card">
-        <div class="a4-kpi-label">Average Ticket</div>
-        <div class="a4-kpi-val">$${Number(avgOrderValue || 0).toFixed(2)}</div>
-        <div class="a4-kpi-sub">៛${Math.round(Number(avgOrderValue || 0) * KHR_RATE).toLocaleString()} KHR</div>
+      <div class="kpi-box">
+        <div class="kpi-label">Average Ticket</div>
+        <div class="kpi-val">$${Number(avgOrderValue || 0).toFixed(2)}</div>
+        <div class="kpi-sub">៛${Math.round(Number(avgOrderValue || 0) * KHR_RATE).toLocaleString()} KHR</div>
       </div>
-      <div class="a4-kpi-card">
-        <div class="a4-kpi-label">Items Sold</div>
-        <div class="a4-kpi-val">${itemsSold}</div>
-        <div class="a4-kpi-sub">Across paid orders</div>
+      <div class="kpi-box">
+        <div class="kpi-label">Items Sold</div>
+        <div class="kpi-val">${totalItems}</div>
+        <div class="kpi-sub">Across paid orders</div>
       </div>
     </div>
 
-    ${a4MethodRows
-      ? `
-      <div class="a4-section-title">Revenue by Payment Method</div>
-      <table class="a4-table" style="margin-bottom:16px;">
-        <thead>
-          <tr>
-            <th>Payment Method</th>
-            <th class="text-center">Orders</th>
-            <th class="text-right">Total (USD)</th>
-            <th class="text-right">Total (KHR)</th>
-          </tr>
-        </thead>
-        <tbody>${a4MethodRows}</tbody>
-      </table>
-    `
+    ${methodsRows
+      ? `<h3>Revenue by Payment Method</h3>
+           <table>
+             <thead>
+               <tr>
+                 <th>Payment Method</th>
+                 <th class="center">Orders</th>
+                 <th class="right">Amount (USD)</th>
+                 <th class="right">Amount (KHR)</th>
+               </tr>
+             </thead>
+             <tbody>${methodsRows}</tbody>
+           </table>`
       : ""
     }
 
-    <div class="a4-section-title">Order Transactions (${periodOrders.length})</div>
-    <table class="a4-table">
+    <h3>Order Transactions (${periodOrders.length})</h3>
+    <table>
       <thead>
         <tr>
           <th>Order #</th>
-          <th class="text-center">Table</th>
+          <th class="center">Table</th>
           <th>Date &amp; Time</th>
-          <th class="text-center">Items</th>
+          <th class="center">Items</th>
           <th>Payment</th>
-          <th class="text-center">Status</th>
-          <th class="text-right">Total (USD)</th>
-          <th class="text-right">Total (KHR)</th>
+          <th class="center">Status</th>
+          <th class="right">Total (USD)</th>
+          <th class="right">Total (KHR)</th>
         </tr>
       </thead>
       <tbody>
-        ${a4OrderRows}
+        ${orderRowsHtml}
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="6" class="text-right">GRAND TOTAL (PAID REVENUE):</td>
-          <td class="text-right" style="color:#059669;">$${revUSD.toFixed(2)}</td>
-          <td class="text-right" style="color:#059669;">៛${revKHR.toLocaleString()}</td>
+          <td colspan="6" class="right">PAID REVENUE TOTAL (${paidOrders.length} Paid Orders):</td>
+          <td class="right">$${revUSD.toFixed(2)}</td>
+          <td class="right">៛${revKHR.toLocaleString()}</td>
         </tr>
       </tfoot>
     </table>
+
+    <div class="footer">
+      <div>Prepared by: ___________________________</div>
+      <div>Approved by (Manager): ___________________________</div>
+    </div>
   `
 
-  printA4ReportHtml(`Executive Report - ${period}`, a4Html)
+  printA4DocumentHtml(`Executive Report - ${period}`, html)
 }
