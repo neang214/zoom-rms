@@ -119,7 +119,7 @@ export const checkKHQR = async (req, res) => {
 
   const token = process.env.BAKONG_TOKEN;
   if (!token)
-    return res.json({ paid: false, reason: "BAKONG_TOKEN not configured — use manual confirm" });
+    return res.json({ paid: false, token_missing: true, reason: "BAKONG_TOKEN not configured on server — use manual confirm" });
 
   const parsedOrderId = parseInt(order_id);
 
@@ -128,8 +128,10 @@ export const checkKHQR = async (req, res) => {
     if (!bakongRes.paid) {
       return res.json({
         paid: false,
-        ...(bakongRes.rateLimited ? { rate_limited: true, reason: bakongRes.reason } : {}),
-        ...(bakongRes.blocked ? { ip_blocked: true, reason: bakongRes.reason } : {}),
+        ...(bakongRes.reason ? { reason: bakongRes.reason } : {}),
+        ...(bakongRes.rateLimited ? { rate_limited: true } : {}),
+        ...(bakongRes.blocked ? { ip_blocked: true } : {}),
+        ...(bakongRes.authError ? { auth_error: true } : {}),
       });
     }
 
@@ -222,6 +224,7 @@ async function checkBakongMD5(md5, token) {
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(body),
+        "User-Agent": "ZOOM-RMS/1.0",
         Authorization: `Bearer ${token}`,
       },
     };
@@ -231,26 +234,40 @@ async function checkBakongMD5(md5, token) {
       response.on("end", () => {
         if (response.statusCode === 403) {
           console.warn("[KHQR] Bakong API returned 403 Forbidden (overseas IP restriction). Use manual confirm.");
-          return resolve({ paid: false, blocked: true, reason: "Bakong API 403 Forbidden (overseas IP blocked by NBC)" });
+          return resolve({ paid: false, blocked: true, reason: "Bakong API 403 Forbidden (overseas server IP blocked by NBC)" });
+        }
+        if (response.statusCode === 401) {
+          console.warn("[KHQR] Bakong API returned 401 Unauthorized (token invalid or expired).");
+          return resolve({ paid: false, authError: true, reason: "Bakong API 401 Unauthorized — BAKONG_TOKEN invalid or expired" });
+        }
+        if (response.statusCode === 429) {
+          console.warn("[KHQR] Bakong API returned 429 Too Many Requests.");
+          return resolve({ paid: false, rateLimited: true, reason: "Bakong API 429 rate limit exceeded" });
         }
         try {
           const parsed = JSON.parse(data);
           if (parsed.responseCode === 0) {
+            console.log(`[KHQR] Paid confirmed for md5=${md5}`);
             return resolve({ paid: true, data: parsed.data });
           }
           if (parsed.errorCode === 17) {
             console.warn(`[KHQR] Bakong API daily limit reached: ${parsed.responseMessage}`);
             return resolve({ paid: false, rateLimited: true, reason: parsed.responseMessage });
           }
-          resolve({ paid: false, reason: parsed.responseMessage });
+          console.log(`[KHQR] Unpaid check md5=${md5}: code=${parsed.responseCode} msg=${parsed.responseMessage}`);
+          resolve({ paid: false, reason: parsed.responseMessage || `Bakong HTTP ${response.statusCode}` });
         } catch {
-          resolve({ paid: false });
+          console.warn(`[KHQR] Non-JSON Bakong response HTTP ${response.statusCode}: ${data.slice(0, 120)}`);
+          resolve({ paid: false, reason: `Bakong returned HTTP ${response.statusCode}` });
         }
       });
     });
+    req.setTimeout(8000, () => {
+      req.destroy(new Error("Bakong API timeout"));
+    });
     req.on("error", (err) => {
       console.error("[KHQR] checkBakongMD5 network error:", err.message);
-      resolve({ paid: false });
+      resolve({ paid: false, reason: `Network error contacting Bakong: ${err.message}` });
     });
     req.write(body);
     req.end();

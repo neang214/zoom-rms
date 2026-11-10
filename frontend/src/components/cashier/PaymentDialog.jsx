@@ -197,7 +197,9 @@ function buildReaksmeyKhqr({ currency = "KHR", totalUSD = 0, totalKHR = 0 }) {
 
   const isKhr = currency === "KHR"
   const amountVal = isKhr ? Math.max(100, Math.round(totalKHR)) : Number(totalUSD.toFixed(2))
-  const amountStr = isKhr ? String(amountVal) : String(amountVal)
+  const amountStr = isKhr
+    ? String(amountVal)
+    : Number.isInteger(amountVal) ? String(amountVal) : amountVal.toFixed(2)
 
   const nowMs = String(Date.now())
   const expMs = String(Date.now() + 10 * 60 * 1000)
@@ -256,6 +258,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
   const khqrDelayRef = useRef(null)
   const khqrCountdownRef = useRef(null)
   const handledPaidRef = useRef(false)
+  const checkingInFlightRef = useRef(false)
   const onCloseRef = useRef(onClose)
   const onPaidRef = useRef(onPaid)
 
@@ -346,24 +349,42 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
 
   const checkMd5Now = async (dataToCheck = khqrData, showFeedback = false) => {
     if (!dataToCheck?.md5 || handledPaidRef.current) return
-    if (showFeedback) setKhqrCheckingNow(true)
+    if (!showFeedback && checkingInFlightRef.current) return
+    checkingInFlightRef.current = true
+    if (showFeedback) {
+      setKhqrCheckingNow(true)
+      setKhqrError(null)
+    }
     try {
       const check = await api.get(
         `/payments/khqr/check/${dataToCheck.md5}?order_id=${order.order_id}&currency=${dataToCheck.currency}`
       )
       if (check.data?.paid) {
         finishKhqrPayment()
+      } else if (check.data?.ip_blocked) {
+        stopKhqrPolling()
+        setKhqrError(
+          "Auto-confirm blocked: Bakong API blocks Render's overseas server IP (403). Verify payment on your phone and click \"Customer paid — confirm\"."
+        )
+      } else if (check.data?.token_missing || check.data?.auth_error) {
+        stopKhqrPolling()
+        setKhqrError(check.data.reason || "Bakong token not configured or expired on server.")
       } else if (check.data?.rate_limited) {
         stopKhqrPolling()
         setKhqrError(`Bakong API: ${check.data.reason || "Daily request limit (100/day) exceeded."}`)
-      } else if (showFeedback && check.data?.reason) {
-        setKhqrError(`Bakong status: ${check.data.reason}`)
+      } else if (showFeedback) {
+        setKhqrError(
+          check.data?.reason
+            ? `Bakong status: ${check.data.reason}`
+            : "Payment not detected on Bakong yet. Please try again in a few seconds."
+        )
       }
     } catch (err) {
       if (showFeedback) {
-        setKhqrError(err?.response?.data?.message || "Payment not detected on Bakong yet.")
+        setKhqrError(err?.response?.data?.message || "Could not check Bakong status. Please try again.")
       }
     } finally {
+      checkingInFlightRef.current = false
       if (showFeedback) setKhqrCheckingNow(false)
     }
   }
@@ -373,6 +394,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
     setKhqrError(null)
     setKhqrPaid(false)
     handledPaidRef.current = false
+    checkingInFlightRef.current = false
     setKhqrCountdown(600)
 
     const generated = buildReaksmeyKhqr({
@@ -385,7 +407,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
     // Static QR does not have a per-order MD5 in Bakong
     if (curMode !== "STATIC") {
       let attempts = 0
-      const MAX_AUTO_CHECKS = 25
+      const MAX_AUTO_CHECKS = 145
 
       const pollCheck = () => {
         if (handledPaidRef.current || document.hidden) return
@@ -398,7 +420,7 @@ export default function PaymentDialog({ order, paymentMethods = [], onClose, onP
         checkMd5Now(generated, false)
       }
 
-      // Start checking after 4s, then every 4s for fast auto-confirm
+      // Start checking after 4s, then every 4s throughout the 10-minute QR window
       khqrDelayRef.current = setTimeout(() => {
         pollCheck()
         khqrPollRef.current = setInterval(pollCheck, 4000)
