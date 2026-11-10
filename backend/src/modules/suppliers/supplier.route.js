@@ -13,6 +13,13 @@ router.get(
 );
 
 router.get(
+  "/archived",
+  authenticate,
+  authorize("admin"),
+  supplierController.getArchivedSuppliers,
+);
+
+router.get(
   "/:id",
   authenticate,
   authorize("admin"),
@@ -31,6 +38,13 @@ router.put(
   authenticate,
   authorize("admin"),
   supplierController.updateSupplier,
+);
+
+router.patch(
+  "/:id/restore",
+  authenticate,
+  authorize("admin"),
+  supplierController.restoreSupplier,
 );
 
 router.delete(

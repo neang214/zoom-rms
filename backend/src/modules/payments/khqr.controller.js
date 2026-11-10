@@ -371,7 +371,7 @@ export const checkKHQR = async (req, res) => {
     if (!khqrMethod)
       khqrMethod = await prisma.paymentMethod.create({ data: { method_name: "KHQR" } });
 
-    const cashier = await prisma.user.findFirst({ where: { role: { in: ["cashier", "admin"] } } });
+    const cashier = await prisma.user.findFirst({ where: { role: { in: ["cashier", "admin"] }, deleted_at: null } });
 
     const result = await prisma.$transaction(async (tx) => {
       // Serialize concurrent payment attempts for this order

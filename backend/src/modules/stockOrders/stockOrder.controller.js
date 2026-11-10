@@ -41,8 +41,21 @@ export const createPurchase = async (req, res) => {
 
     try {
         const parsedQuantity = parseFloat(quantity);
+        const parsedStockId = parseInt(stock_id, 10);
+        const parsedSupplierId = parseInt(supplier_id, 10);
         if (isNaN(parsedQuantity) || parsedQuantity <= 0) {
             return res.status(400).json({ message: "Quantity must be a positive number" });
+        }
+        if (!Number.isInteger(parsedStockId) || parsedStockId <= 0 || !Number.isInteger(parsedSupplierId) || parsedSupplierId <= 0) {
+            return res.status(400).json({ message: "Invalid stock or supplier ID" });
+        }
+
+        const activeSupplier = await prisma.supplier.findFirst({
+            where: { supplier_id: parsedSupplierId, deleted_at: null },
+            select: { supplier_id: true },
+        });
+        if (!activeSupplier) {
+            return res.status(400).json({ message: "Supplier not found or archived" });
         }
 
         const purchaseOrder = await prisma.stockOrder.create({
@@ -50,8 +63,8 @@ export const createPurchase = async (req, res) => {
                 invoice,
                 quantity: parsedQuantity,
                 user_id,
-                stock_id: parseInt(stock_id),
-                supplier_id: parseInt(supplier_id),
+                stock_id: parsedStockId,
+                supplier_id: parsedSupplierId,
             },
             include: {
                 stock: { select: { item_name: true } },

@@ -14,7 +14,7 @@ export const login = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { username } });
 
-    if (!user) {
+    if (!user || user.deleted_at) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -66,12 +66,16 @@ export const checkAuth = async (req, res) => {
         email: true,
         role: true,
         created_at: true,
+        deleted_at: true,
       },
     });
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user || user.deleted_at) {
+      return res.status(401).json({ message: "Account is inactive or deleted" });
+    }
 
-    res.status(200).json(user);
+    const { deleted_at, ...safeUser } = user;
+    res.status(200).json(safeUser);
   } catch (error) {
     res
       .status(500)

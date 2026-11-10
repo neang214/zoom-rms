@@ -1,28 +1,44 @@
-import { Pencil, Trash2, Phone, Mail } from "lucide-react"
+import { Pencil, Trash2, Phone, Mail, RotateCcw, Archive } from "lucide-react"
 import { Button, Card, Input, Label, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui"
 import { useLang } from "@/i18n/LanguageContext"
+import { cn } from "@/lib/utils"
 
 const colors = ["bg-[var(--color-primary-muted)] text-[var(--color-primary)]", "bg-[var(--color-info-muted)] text-[var(--color-info)]", "bg-[var(--color-flame-muted)] text-[var(--color-flame)]", "bg-[var(--color-plum-muted)] text-[var(--color-plum)]"]
 
-export function SupplierGrid({ suppliers, isLoading, onEdit, onDelete }) {
+export function SupplierGrid({
+  suppliers, isLoading, onEdit, onDelete,
+  archivedMode = false, onRestore, restoringId = null,
+}) {
   const { t } = useLang()
   if (isLoading) return <div className="text-center py-16 text-[var(--color-muted)] text-sm">{t("suppliers.loading")}</div>
-  if (suppliers.length === 0) return <div className="text-center py-16 text-[var(--color-muted)] text-sm">{t("suppliers.noSuppliers")}</div>
+  if (suppliers.length === 0) {
+    return (
+      <div className="text-center py-16 text-[var(--color-muted)] text-sm">
+        {archivedMode ? t("suppliers.noArchived") : t("suppliers.noSuppliers")}
+      </div>
+    )
+  }
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {suppliers.map((sup, idx) => (
-        <Card key={sup.supplier_id} className="hover:shadow-md transition-shadow">
+        <Card key={sup.supplier_id} className={cn("hover:shadow-md transition-shadow", archivedMode && "opacity-80")}>
           <div className="p-4">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg font-bold ${colors[idx % colors.length]}`}>
+            <div className="flex items-start justify-between gap-2 mb-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg font-bold shrink-0 ${colors[idx % colors.length]}`}>
                   {sup.supplier_name?.charAt(0)}
                 </div>
-                <div>
-                  <div className="font-semibold text-[var(--color-text)] text-sm">{sup.supplier_name}</div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-[var(--color-text)] text-sm truncate">{sup.supplier_name}</div>
                   <div className="text-xs text-[var(--color-muted)]">{t("nav.suppliers")} #{sup.supplier_id}</div>
                 </div>
               </div>
+              {archivedMode && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--color-background)] border border-[var(--color-border)] text-[var(--color-muted)] shrink-0">
+                  <Archive size={10} />
+                  {t("suppliers.archivedBadge")}
+                </span>
+              )}
             </div>
 
             <div className="space-y-1.5 mb-4">
@@ -34,14 +50,26 @@ export function SupplierGrid({ suppliers, isLoading, onEdit, onDelete }) {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <button onClick={() => onEdit(sup)} className="flex-1 flex items-center justify-center gap-1.5 border border-[var(--color-border)] rounded-xl py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-all">
-                <Pencil size={13} /> {t("common.edit") || "Edit"}
+            {archivedMode ? (
+              <button
+                type="button"
+                onClick={() => onRestore?.(sup)}
+                disabled={restoringId === sup.supplier_id}
+                className="w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-sm font-semibold bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} className={cn(restoringId === sup.supplier_id && "animate-spin")} />
+                {t("suppliers.restore")}
               </button>
-              <button onClick={() => onDelete(sup.supplier_id)} className="flex-1 flex items-center justify-center gap-1.5 border border-[var(--color-danger)]/25 text-[var(--color-danger)] rounded-xl py-2 text-sm font-medium hover:bg-[var(--color-danger-muted)] transition-colors">
-                <Trash2 size={13} /> {t("common.delete") || "Delete"}
-              </button>
-            </div>
+            ) : (
+              <div className="flex gap-2">
+                <button type="button" onClick={() => onEdit(sup)} className="flex-1 flex items-center justify-center gap-1.5 border border-[var(--color-border)] rounded-xl py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-all cursor-pointer">
+                  <Pencil size={13} /> {t("common.edit") || "Edit"}
+                </button>
+                <button type="button" onClick={() => onDelete(sup.supplier_id)} className="flex-1 flex items-center justify-center gap-1.5 border border-[var(--color-danger)]/25 text-[var(--color-danger)] rounded-xl py-2 text-sm font-medium hover:bg-[var(--color-danger-muted)] transition-colors cursor-pointer">
+                  <Trash2 size={13} /> {t("common.delete") || "Delete"}
+                </button>
+              </div>
+            )}
           </div>
         </Card>
       ))}

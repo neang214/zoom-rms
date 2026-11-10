@@ -1,4 +1,4 @@
-import { Search, Pencil, Trash2, Users, Shield, ChefHat, Coffee, DollarSign, ClipboardList } from "lucide-react"
+import { Search, Pencil, Trash2, Users, Shield, ChefHat, Coffee, DollarSign, RotateCcw, Archive, Lock } from "lucide-react"
 import {
   Button, Badge, Card, Input, Label,
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
@@ -6,13 +6,16 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui"
 import { useLang } from "@/i18n/LanguageContext"
+import { cn } from "@/lib/utils"
 
-export const roleConfig = {
+const roleConfig = {
   admin:   { labelKey: "role.admin",   label: "Admin",   color: "purple",  icon: Shield },
   kitchen: { labelKey: "role.kitchen", label: "Kitchen", color: "orange",  icon: ChefHat },
   barista: { labelKey: "role.barista", label: "Barista", color: "warning", icon: Coffee },
   cashier: { labelKey: "role.cashier", label: "Cashier", color: "success", icon: DollarSign },
 }
+
+const staffRoleEntries = Object.entries(roleConfig).filter(([key]) => key !== "admin")
 
 const avatarColors = ["bg-[var(--color-primary-muted)] text-[var(--color-primary)]", "bg-[var(--color-info-muted)] text-[var(--color-info)]", "bg-[var(--color-flame-muted)] text-[var(--color-flame)]", "bg-[var(--color-plum-muted)] text-[var(--color-plum)]"]
 
@@ -41,13 +44,20 @@ export function UserStats({ users, counts }) {
   )
 }
 
-export function UsersTable({ users, isLoading, search, setSearch, roleFilter, setRoleFilter, currentUser, onEdit, onDelete }) {
+export function UsersTable({
+  users, isLoading, search, setSearch, roleFilter, setRoleFilter,
+  currentUser, onEdit, onDelete, archivedMode = false, onRestore, restoringId = null,
+}) {
   const { t } = useLang()
   return (
     <Card>
       <div className="p-5 pb-4 border-b border-[var(--color-border)]">
-        <div className="font-semibold text-[var(--color-primary)]">{t("users.title")}</div>
-        <div className="text-xs text-[var(--color-muted)] mt-0.5">{t("users.subtitle")}</div>
+        <div className="font-semibold text-[var(--color-primary)]">
+          {archivedMode ? t("users.archivedTab") : t("users.title")}
+        </div>
+        <div className="text-xs text-[var(--color-muted)] mt-0.5">
+          {archivedMode ? t("users.archivedBanner") : t("users.subtitle")}
+        </div>
       </div>
 
       <div className="p-4 flex gap-3 flex-wrap">
@@ -82,8 +92,11 @@ export function UsersTable({ users, isLoading, search, setSearch, roleFilter, se
                 const cfg = roleConfig[u.role] || {}
                 const RoleIcon = cfg.icon
                 const isSelf = currentUser?.user_id === u.user_id
+                const isAdmin = u.role === "admin"
+                const canEdit = !isAdmin || isSelf
+                const canDelete = !isSelf && !isAdmin
                 return (
-                  <TableRow key={u.user_id}>
+                  <TableRow key={u.user_id} className={cn(archivedMode && "opacity-80")}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold ${avatarColors[idx % avatarColors.length]}`}>
@@ -97,22 +110,52 @@ export function UsersTable({ users, isLoading, search, setSearch, roleFilter, se
                     </TableCell>
                     <TableCell className="text-[var(--color-muted)] text-sm">{u.email}</TableCell>
                     <TableCell>
-                      <Badge variant={cfg.color} className="gap-1.5">
-                        {RoleIcon && <RoleIcon size={11} />} {t(cfg.labelKey) || cfg.label || u.role}
-                      </Badge>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant={cfg.color} className="gap-1.5">
+                          {RoleIcon && <RoleIcon size={11} />} {t(cfg.labelKey) || cfg.label || u.role}
+                        </Badge>
+                        {archivedMode && (
+                          <Badge variant="outline" className="gap-1">
+                            <Archive size={10} />
+                            {t("users.archivedBadge")}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => onEdit(u)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors"><Pencil size={14} /></button>
-                        {!isSelf && <button onClick={() => onDelete(u.user_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors"><Trash2 size={14} /></button>}
-                      </div>
+                      {archivedMode ? (
+                        <button
+                          type="button"
+                          onClick={() => onRestore?.(u)}
+                          disabled={restoringId === u.user_id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <RotateCcw size={12} className={restoringId === u.user_id ? "animate-spin" : ""} />
+                          {t("users.restore")}
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          {canEdit && (
+                            <button type="button" onClick={() => onEdit(u)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors cursor-pointer">
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button type="button" onClick={() => onDelete(u.user_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer">
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 )
               })}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-sm text-[var(--color-muted)] py-8">{t("users.noUsers")}</TableCell>
+                  <TableCell colSpan={4} className="text-center text-sm text-[var(--color-muted)] py-8">
+                    {archivedMode ? t("users.noArchived") : t("users.noUsers")}
+                  </TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -125,6 +168,7 @@ export function UsersTable({ users, isLoading, search, setSearch, roleFilter, se
 
 export function UserFormDialog({ open, onClose, isEdit, title, description, form, setForm, errorMsg, saving, onSubmit, submitLabel }) {
   const { t } = useLang()
+  const isLockedAdmin = isEdit && form.role === "admin"
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm">
@@ -147,12 +191,25 @@ export function UserFormDialog({ open, onClose, isEdit, title, description, form
           </div>
           <div className="space-y-1.5">
             <Label>{t("users.role") || "Role"}</Label>
-            <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v }))}>
-              <SelectTrigger><SelectValue placeholder={isEdit ? undefined : t("users.selectRole")} /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(roleConfig).map(([key, cfg]) => <SelectItem key={key} value={key}>{t(cfg.labelKey) || cfg.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            {isLockedAdmin ? (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] text-sm text-[var(--color-text-secondary)]">
+                  <span className="inline-flex items-center gap-1.5 font-medium">
+                    <Shield size={13} className="text-[var(--color-plum)]" />
+                    {t("role.admin")}
+                  </span>
+                  <Lock size={13} className="text-[var(--color-muted)]" />
+                </div>
+                <p className="text-[11px] text-[var(--color-muted)]">{t("users.adminRoleLocked")}</p>
+              </div>
+            ) : (
+              <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v }))}>
+                <SelectTrigger><SelectValue placeholder={isEdit ? undefined : t("users.selectRole")} /></SelectTrigger>
+                <SelectContent>
+                  {staffRoleEntries.map(([key, cfg]) => <SelectItem key={key} value={key}>{t(cfg.labelKey) || cfg.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
         {errorMsg && <div className="text-sm text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2 mt-3">{errorMsg}</div>}

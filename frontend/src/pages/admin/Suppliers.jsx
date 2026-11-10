@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { useLang } from "@/i18n/LanguageContext"
-import { deleteErrorMessage } from "@/lib/utils"
-import { Search, Plus, Users } from "lucide-react"
+import { cn, deleteErrorMessage } from "@/lib/utils"
+import { Search, Plus, Users, Archive } from "lucide-react"
 import { Button, Card, Input } from "@/components/ui"
 import { useSupplierStore } from "../../context/supplierContext"
 import { usePageTitle } from "../../hooks/usePageTitle"
@@ -11,8 +11,14 @@ import { SupplierGrid, SupplierFormDialog } from "@/components/admin/SuppliersPa
 export default function Suppliers() {
   const { t } = useLang()
   usePageTitle(t("nav.suppliers"))
-  const { suppliers, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, isLoading } = useSupplierStore()
+  const {
+    suppliers, archivedSuppliers, fetchSuppliers, fetchArchivedSuppliers,
+    createSupplier, updateSupplier, deleteSupplier, restoreSupplier,
+    isLoading, archivedLoading,
+  } = useSupplierStore()
 
+  const [activeTab, setActiveTab] = useState("active") // "active" | "archived"
+  const [restoringId, setRestoringId] = useState(null)
   const [search, setSearch] = useState("")
   const [addOpen, setAddOpen] = useState(false)
   const [editSupplier, setEditSupplier] = useState(null)
@@ -22,9 +28,11 @@ export default function Suppliers() {
 
   useEffect(() => {
     fetchSuppliers()
-  }, [])
+    fetchArchivedSuppliers().catch(() => {})
+  }, [fetchSuppliers, fetchArchivedSuppliers])
 
-  const filtered = suppliers.filter(s =>
+  const sourceSuppliers = activeTab === "archived" ? (archivedSuppliers || []) : (suppliers || [])
+  const filtered = sourceSuppliers.filter(s =>
     s.supplier_name?.toLowerCase().includes(search.toLowerCase()) ||
     s.email?.toLowerCase().includes(search.toLowerCase()) ||
     s.phone?.toLowerCase().includes(search.toLowerCase())
@@ -110,6 +118,24 @@ export default function Suppliers() {
     }
   }
 
+  const handleTabSwitch = (tab) => {
+    setActiveTab(tab)
+    if (tab === "archived") {
+      fetchArchivedSuppliers().catch(() => {})
+    }
+  }
+
+  const handleRestore = async (sup) => {
+    setRestoringId(sup.supplier_id)
+    try {
+      await restoreSupplier(sup.supplier_id)
+    } catch (err) {
+      console.error("Failed to restore supplier:", err)
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
   return (
     <div className="space-y-5">
       <SimpleHeader title={t("suppliers.title")}
@@ -129,14 +155,79 @@ export default function Suppliers() {
         </Card>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-center justify-between">
         <div className="relative flex-1 min-w-[240px] max-w-md">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
           <Input value={search} onChange={e => setSearch(e.target.value)} className="pl-9" placeholder={t("suppliers.searchPlaceholder")} />
         </div>
+
+        <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] w-fit">
+          <button
+            type="button"
+            onClick={() => handleTabSwitch("active")}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+              activeTab === "active"
+                ? "bg-[var(--color-primary)] text-white shadow-sm"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+            )}
+          >
+            <Users size={14} />
+            <span>{t("suppliers.activeTab")}</span>
+            <span
+              className={cn(
+                "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+                activeTab === "active"
+                  ? "bg-white/20 text-white"
+                  : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+              )}
+            >
+              {(suppliers || []).length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabSwitch("archived")}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+              activeTab === "archived"
+                ? "bg-[var(--color-primary)] text-white shadow-sm"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+            )}
+          >
+            <Archive size={14} />
+            <span>{t("suppliers.archivedTab")}</span>
+            <span
+              className={cn(
+                "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+                activeTab === "archived"
+                  ? "bg-white/20 text-white"
+                  : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+              )}
+            >
+              {(archivedSuppliers || []).length}
+            </span>
+          </button>
+        </div>
       </div>
 
-      <SupplierGrid suppliers={filtered} isLoading={isLoading} onEdit={openEdit} onDelete={requestDelete} />
+      {activeTab === "archived" && (
+        <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <Archive size={14} className="text-[var(--color-muted)] shrink-0" />
+          <span>{t("suppliers.archivedBanner")}</span>
+        </div>
+      )}
+
+      <SupplierGrid
+        suppliers={filtered}
+        isLoading={activeTab === "archived" ? archivedLoading : isLoading}
+        onEdit={openEdit}
+        onDelete={requestDelete}
+        archivedMode={activeTab === "archived"}
+        onRestore={handleRestore}
+        restoringId={restoringId}
+      />
 
       <SupplierFormDialog
         open={addOpen} onClose={() => setAddOpen(false)} isEdit={false}

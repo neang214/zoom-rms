@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { useLang } from "@/i18n/LanguageContext"
-import { deleteErrorMessage } from "@/lib/utils"
-import { Plus } from "lucide-react"
+import { cn, deleteErrorMessage } from "@/lib/utils"
+import { Plus, Users, Archive } from "lucide-react"
 import { Button } from "@/components/ui"
 import { useUserStore } from "../../context/userContext"
 import { authContext } from "../../context/authContext"
@@ -12,9 +12,15 @@ import { UserStats, UsersTable, UserFormDialog } from "@/components/admin/UserMa
 export default function UserManagement() {
   const { t } = useLang()
   usePageTitle(t("nav.users"))
-  const { users, fetchUsers, createUser, updateUser, deleteUser, isLoading } = useUserStore()
+  const {
+    users, archivedUsers, fetchUsers, fetchArchivedUsers,
+    createUser, updateUser, deleteUser, restoreUser,
+    isLoading, archivedLoading,
+  } = useUserStore()
   const { user: currentUser } = authContext()
 
+  const [activeTab, setActiveTab] = useState("active") // "active" | "archived"
+  const [restoringId, setRestoringId] = useState(null)
   const [search, setSearch] = useState("")
   const [roleFilter, setRoleFilter] = useState("All Role")
   const [addOpen, setAddOpen] = useState(false)
@@ -25,11 +31,13 @@ export default function UserManagement() {
 
   useEffect(() => {
     fetchUsers()
-  }, [])
+    fetchArchivedUsers().catch(() => {})
+  }, [fetchUsers, fetchArchivedUsers])
 
-  const filtered = users.filter(u =>
+  const sourceUsers = activeTab === "archived" ? (archivedUsers || []) : (users || [])
+  const filtered = sourceUsers.filter(u =>
     (roleFilter === "All Role" || u.role === roleFilter) &&
-    (u.username.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()))
+    (u.username?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()))
   )
 
   const counts = { admin: 0, kitchen: 0, barista: 0, cashier: 0 }
@@ -42,23 +50,29 @@ export default function UserManagement() {
   }
 
   const openEdit = (u) => {
+    if (u.role === "admin" && currentUser?.user_id !== u.user_id) return
     setEditUser(u)
     setErrorMsg("")
     setForm({ username: u.username, email: u.email, password: "", role: u.role })
   }
 
   const handleAdd = async () => {
-    if (!form.username || !form.email || !form.password || !form.role) {
+    if (!form.username?.trim() || !form.email?.trim() || !form.password || !form.role) {
       setErrorMsg(t("users.allRequired"))
       return
     }
     setSaving(true)
     setErrorMsg("")
     try {
-      await createUser(form)
+      await createUser({
+        username: form.username.trim(),
+        email: form.email.trim(),
+        password: form.password,
+        role: form.role,
+      })
       setAddOpen(false)
     } catch (err) {
-      setErrorMsg(err?.response?.data?.message || t("cashier.submitFailed"))
+      setErrorMsg(deleteErrorMessage(err, t))
     } finally {
       setSaving(false)
     }
@@ -77,7 +91,7 @@ export default function UserManagement() {
       await updateUser(editUser.user_id, payload)
       setEditUser(null)
     } catch (err) {
-      setErrorMsg(err?.response?.data?.message || t("cashier.submitFailed"))
+      setErrorMsg(deleteErrorMessage(err, t))
     } finally {
       setSaving(false)
     }
@@ -109,6 +123,24 @@ export default function UserManagement() {
     }
   }
 
+  const handleTabSwitch = (tab) => {
+    setActiveTab(tab)
+    if (tab === "archived") {
+      fetchArchivedUsers().catch(() => {})
+    }
+  }
+
+  const handleRestore = async (user) => {
+    setRestoringId(user.user_id)
+    try {
+      await restoreUser(user.user_id)
+    } catch (err) {
+      console.error("Failed to restore user:", err)
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
   return (
     <div className="space-y-5">
       <SimpleHeader title={t("nav.users")}
@@ -117,11 +149,67 @@ export default function UserManagement() {
 
       <UserStats users={users} counts={counts} />
 
+      <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] w-fit">
+        <button
+          type="button"
+          onClick={() => handleTabSwitch("active")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+            activeTab === "active"
+              ? "bg-[var(--color-primary)] text-white shadow-sm"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+          )}
+        >
+          <Users size={14} />
+          <span>{t("users.activeTab")}</span>
+          <span
+            className={cn(
+              "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+              activeTab === "active"
+                ? "bg-white/20 text-white"
+                : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+            )}
+          >
+            {(users || []).length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleTabSwitch("archived")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+            activeTab === "archived"
+              ? "bg-[var(--color-primary)] text-white shadow-sm"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+          )}
+        >
+          <Archive size={14} />
+          <span>{t("users.archivedTab")}</span>
+          <span
+            className={cn(
+              "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+              activeTab === "archived"
+                ? "bg-white/20 text-white"
+                : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+            )}
+          >
+            {(archivedUsers || []).length}
+          </span>
+        </button>
+      </div>
+
       <UsersTable
-        users={filtered} isLoading={isLoading}
+        users={filtered}
+        isLoading={activeTab === "archived" ? archivedLoading : isLoading}
         search={search} setSearch={setSearch}
         roleFilter={roleFilter} setRoleFilter={setRoleFilter}
-        currentUser={currentUser} onEdit={openEdit} onDelete={requestDelete}
+        currentUser={currentUser}
+        onEdit={openEdit}
+        onDelete={requestDelete}
+        archivedMode={activeTab === "archived"}
+        onRestore={handleRestore}
+        restoringId={restoringId}
       />
 
       <UserFormDialog
