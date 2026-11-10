@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import api from "../services/axios";
+import { resetSocket } from "../services/socket";
 
 const TAB_SESSION_KEY = "rms-tab-authenticated";
 
@@ -51,6 +52,7 @@ export const authContext = create(
                     }
                     sessionStorage.setItem(TAB_SESSION_KEY, "true");
                     localStorage.removeItem("rms_token");
+                    resetSocket();
                     set({ user: userData, isLoading: false });
                 } catch (error) {
                     console.error("Login failed:", error);
@@ -70,6 +72,7 @@ export const authContext = create(
                     sessionStorage.removeItem("rms-auth-storage");
                     localStorage.removeItem("rms_token");
                     localStorage.removeItem("rms-auth-storage");
+                    resetSocket();
                     set({ user: null });
                 }
             },

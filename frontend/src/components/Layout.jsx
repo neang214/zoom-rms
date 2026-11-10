@@ -113,9 +113,12 @@ export default function Layout({ children }) {
     barista: "/barista/orders",
   }
 
-  useEffect(() => { unlockAudioOnFirstInteraction() }, [])
+  const needsSoundPrompt = ["cashier", "kitchen", "barista"].includes(role)
 
-  const needsSoundPrompt = ["cashier", "kitchen", "barista", "admin"].includes(role)
+  useEffect(() => {
+    if (needsSoundPrompt) unlockAudioOnFirstInteraction()
+  }, [needsSoundPrompt])
+
   const [soundUnlocked, setSoundUnlocked] = useState(isAudioUnlocked())
 
   useEffect(() => {
@@ -289,33 +292,36 @@ export default function Layout({ children }) {
               {/* Globe Icon Dropdown for Language */}
               <LanguageSwitcher langs={["en", "km"]} />
 
-              {/* Notification Bell */}
-              <button
-                onClick={() => navigate(bellDestination[role] || "/admin")}
-                title={bellCount > 0 ? `${bellCount} order(s) need attention` : "No pending notifications"}
-                className={cn(
-                  "relative p-2 rounded-lg transition-all cursor-pointer",
-                  bellRinging
-                    ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
-                    : "hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
-                )}
-              >
-                <Bell size={16} className={cn(bellRinging && "animate-bounce", bellCount > 0 && "text-[var(--color-warning)]")} />
-                {bellCount > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-danger)] text-white text-[9px] font-bold flex items-center justify-center">
-                    {bellCount}
-                  </span>
-                )}
-              </button>
+              {/* Notification Bell & Test Sound (Cashier / Kitchen / Barista only) */}
+              {needsSoundPrompt && (
+                <>
+                  <button
+                    onClick={() => navigate(bellDestination[role] || "/")}
+                    title={bellCount > 0 ? `${bellCount} order(s) need attention` : "No pending notifications"}
+                    className={cn(
+                      "relative p-2 rounded-lg transition-all cursor-pointer",
+                      bellRinging
+                        ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                        : "hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                    )}
+                  >
+                    <Bell size={16} className={cn(bellRinging && "animate-bounce", bellCount > 0 && "text-[var(--color-warning)]")} />
+                    {bellCount > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-danger)] text-white text-[9px] font-bold flex items-center justify-center">
+                        {bellCount}
+                      </span>
+                    )}
+                  </button>
 
-              {/* Test Sound Button */}
-              <button
-                onClick={unlockAudioNow}
-                title="Test notification alert sound"
-                className="p-2 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
-              >
-                <Volume2 size={16} />
-              </button>
+                  <button
+                    onClick={unlockAudioNow}
+                    title="Test notification alert sound"
+                    className="p-2 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                  >
+                    <Volume2 size={16} />
+                  </button>
+                </>
+              )}
 
               {/* Dark / Light Theme Toggle */}
               <button

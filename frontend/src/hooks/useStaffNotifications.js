@@ -138,7 +138,7 @@ export function useStaffNotifications(role) {
 
   useSocketEvent("order:new", (order) => {
     const orderId = order?.order_id
-    if (role === "cashier" || role === "admin") {
+    if (role === "cashier") {
       ringForOrder(orderId, "new")
     }
     if (role === "kitchen") {
@@ -170,7 +170,7 @@ export function useStaffNotifications(role) {
 
   useSocketEvent("order_item:new", (item) => {
     const orderId = item?.order_id ?? item?.order?.order_id
-    if (role === "cashier" || role === "admin") {
+    if (role === "cashier") {
       ringForOrder(orderId, "new")
     }
     if (role === "kitchen") {
@@ -186,14 +186,14 @@ export function useStaffNotifications(role) {
   useSocketEvent("order_item:status_changed", (item) => {
     if (role === "kitchen") fetchKitchenQueue()
     if (role === "barista") fetchBaristaQueue()
-    if (item?.status === "Ready" && (role === "cashier" || role === "admin")) {
+    if (item?.status === "Ready" && role === "cashier") {
       const orderId = item?.order_id ?? item?.order?.order_id
       ringForOrder(orderId, "ready")
     }
   })
 
   useSocketEvent("order:status_changed", (order) => {
-    if (order?.status === "Served" && (role === "cashier" || role === "admin")) {
+    if (order?.status === "Served" && role === "cashier") {
       ringForOrder(order?.order_id, "ready")
     }
   })

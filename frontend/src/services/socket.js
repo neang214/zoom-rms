@@ -85,4 +85,11 @@ export function useSocketEvent(eventName, handler) {
   }, [eventName])
 }
 
+export function resetSocket() {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+}
+
 export default getSocket
