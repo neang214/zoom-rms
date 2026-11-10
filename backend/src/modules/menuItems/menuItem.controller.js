@@ -1,5 +1,6 @@
 import prisma from "../../utils/db.js";
 import { Prisma } from "../../generated/prisma/client.js";
+import { handleEntityImageUpload, deleteCloudinaryImage } from "../../utils/cloudinary.js";
 
 export const getAllItems = async (req, res) => {
     try {
@@ -112,33 +113,37 @@ export const toggleItem = async (req, res) => {
 };
 
 export const uploadItemImage = async (req, res) => {
-  try {
-    if (!req.file)
-      return res.status(400).json({ message: "No image file provided" });
- 
-    
-    
-    const imageUrl = `/uploads/${req.file.filename}`;
- 
-    const updated = await prisma.menuItem.update({
-      where: { menu_item_id: parseInt(req.params.id) },
-      data: { image_url: imageUrl },
-    });
- 
-    res.json({ image_url: imageUrl, menu_item: updated });
-  } catch (error) {
-    if (error.code === "P2025")
-      return res.status(404).json({ message: "Menu item not found" });
-    console.error("uploadItemImage error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
+  return handleEntityImageUpload({
+    req,
+    res,
+    findExisting: (id) =>
+      prisma.menuItem.findUnique({
+        where: { menu_item_id: id },
+        select: { menu_item_id: true, image_url: true },
+      }),
+    updateImageUrl: (id, imageUrl) =>
+      prisma.menuItem.update({
+        where: { menu_item_id: id },
+        data: { image_url: imageUrl },
+      }),
+    folder: "zoom-rms/menu",
+    publicIdPrefix: "menu",
+    entityKey: "menu_item",
+    notFoundMessage: "Menu item not found",
+  });
 };
 
 export const deleteItem = async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0)
+        return res.status(400).json({ message: "Invalid ID format" });
+
     try {
-        await prisma.menuItem.delete({
-            where: { menu_item_id: parseInt(req.params.id) },
+        const deleted = await prisma.menuItem.delete({
+            where: { menu_item_id: id },
+            select: { image_url: true },
         });
+        await deleteCloudinaryImage(deleted.image_url);
         res.json({ message: "Menu deleted" });
     } catch (error) {
         if (error.code === "P2025")

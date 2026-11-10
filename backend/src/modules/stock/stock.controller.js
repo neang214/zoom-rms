@@ -1,5 +1,6 @@
 import prisma from "../../utils/db.js";
 import { sendTelegramMessage, stockUsedMessage, lowStockMessage } from "../../utils/telegram.js";
+import { handleEntityImageUpload, deleteCloudinaryImage } from "../../utils/cloudinary.js";
 
 export const getAllStockItems = async (req, res) => {
     try {
@@ -157,19 +158,25 @@ export const decreaseStockQuantity = async (req, res) => {
 };
 
 export const deleteStock = async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0)
+        return res.status(400).json({ message: "Invalid ID format" });
+
     try {
-        await prisma.$transaction(async (tx) => {
+        const deleted = await prisma.$transaction(async (tx) => {
             // 1. delete related stock orders first
             await tx.stockOrder.deleteMany({
-                where: { stock_id: parseInt(req.params.id) },
+                where: { stock_id: id },
             });
 
             // 2. then delete the stock item
-            await tx.stock.delete({
-                where: { stock_id: parseInt(req.params.id) },
+            return tx.stock.delete({
+                where: { stock_id: id },
+                select: { image_url: true },
             });
         });
 
+        await deleteCloudinaryImage(deleted.image_url);
         res.status(200).json({ message: "Stock deleted successfully" });
     } catch (error) {
         if (error.code === "P2025")
@@ -179,25 +186,24 @@ export const deleteStock = async (req, res) => {
 };
 
 // POST /api/stock/:id/image  (admin, multipart field "image")
-// Stores a RELATIVE url so the image keeps working when the API is reached
-// through ngrok or a deployed host — the frontend prefixes the API origin.
+// Uploads the image buffer to Cloudinary and persists the returned HTTPS secure_url.
 export const uploadStockImage = async (req, res) => {
-  try {
-    if (!req.file)
-      return res.status(400).json({ message: "No image file provided" });
-
-    const imageUrl = `/uploads/${req.file.filename}`;
-
-    const updated = await prisma.stock.update({
-      where: { stock_id: parseInt(req.params.id) },
-      data: { image_url: imageUrl },
-    });
-
-    res.json({ image_url: imageUrl, stock: updated });
-  } catch (error) {
-    if (error.code === "P2025")
-      return res.status(404).json({ message: "Stock item not found" });
-    console.error("uploadStockImage error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
+  return handleEntityImageUpload({
+    req,
+    res,
+    findExisting: (id) =>
+      prisma.stock.findUnique({
+        where: { stock_id: id },
+        select: { stock_id: true, image_url: true },
+      }),
+    updateImageUrl: (id, imageUrl) =>
+      prisma.stock.update({
+        where: { stock_id: id },
+        data: { image_url: imageUrl },
+      }),
+    folder: "zoom-rms/stock",
+    publicIdPrefix: "stock",
+    entityKey: "stock",
+    notFoundMessage: "Stock item not found",
+  });
 };

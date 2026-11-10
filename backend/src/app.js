@@ -87,6 +87,13 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  if (err.name === "MulterError") {
+    const message = err.code === "LIMIT_FILE_SIZE" ? "Image file size must be 5MB or less" : err.message;
+    return res.status(400).json({ message });
+  }
+  if (err.statusCode) {
+    return res.status(err.statusCode).json({ message: err.message });
+  }
   console.error(err.stack);
   res.status(500).json({ message: "Internal Server Error" });
 });
