@@ -2,12 +2,17 @@ import prisma from "../../utils/db.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { handleEntityImageUpload, deleteCloudinaryImage } from "../../utils/cloudinary.js";
 
+const findActiveMenuItem = (id, select) =>
+  prisma.menuItem.findFirst({
+    where: { menu_item_id: id, deleted_at: null },
+    ...(select ? { select } : {}),
+  });
+
 export const getAllItems = async (req, res) => {
     try {
-        const menuItems = await prisma.menuItem.findMany();
-        if (menuItems.length === 0) {
-            return res.status(200).json([]);
-        }
+        const menuItems = await prisma.menuItem.findMany({
+            where: { deleted_at: null },
+        });
         res.json(menuItems);
     } catch {
         res.status(500).json({ message: "Internal Server Error" });
@@ -18,11 +23,12 @@ export const getItemsByCategory = async (req, res) => {
     try {
         const menuItems = await prisma.menuItem.findMany({
             where: {
-                category_id: parseInt(req.params.categoryId),
-                available: true, 
+                category_id: parseInt(req.params.categoryId, 10),
+                available: true,
+                deleted_at: null,
             },
             include: {
-                category: { select: { category_name: true } }, 
+                category: { select: { category_name: true } },
             },
         });
 
@@ -34,10 +40,13 @@ export const getItemsByCategory = async (req, res) => {
 };
 
 export const getItem = async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Invalid ID format" });
+    }
+
     try {
-        const menuItem = await prisma.menuItem.findUnique({
-            where: { menu_item_id: parseInt(req.params.id) },
-        });
+        const menuItem = await findActiveMenuItem(id);
         if (!menuItem) {
             return res.status(404).json({ message: "Menu item not found" });
         }
@@ -54,7 +63,7 @@ export const createItem = async (req, res) => {
             data: {
                 item_name,
                 item_name_km: item_name_km || null,
-                category_id: parseInt(category_id),
+                category_id: parseInt(category_id, 10),
                 price: new Prisma.Decimal(price),
                 available: available === true || available === "true",
             },
@@ -68,9 +77,19 @@ export const createItem = async (req, res) => {
 
 export const updateItem = async (req, res) => {
     const { item_name, item_name_km, price } = req.body;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Invalid ID format" });
+    }
+
     try {
+        const existing = await findActiveMenuItem(id, { menu_item_id: true });
+        if (!existing) {
+            return res.status(404).json({ message: "Item not found" });
+        }
+
         const menuItem = await prisma.menuItem.update({
-            where: { menu_item_id: parseInt(req.params.id) },
+            where: { menu_item_id: id },
             data: {
                 item_name,
                 item_name_km: item_name_km || null,
@@ -90,10 +109,15 @@ export const toggleItem = async (req, res) => {
     const isAvailable =
         available === true || available === "true" || available === 1;
     try {
-        const itemId = parseInt(req.params.id);
+        const itemId = parseInt(req.params.id, 10);
 
-        if (isNaN(itemId)) {
+        if (!Number.isInteger(itemId) || itemId <= 0) {
             return res.status(400).json({ message: "Invalid ID format" });
+        }
+
+        const existing = await findActiveMenuItem(itemId, { menu_item_id: true });
+        if (!existing) {
+            return res.status(404).json({ message: "Item not found" });
         }
 
         await prisma.menuItem.update({
@@ -117,10 +141,7 @@ export const uploadItemImage = async (req, res) => {
     req,
     res,
     findExisting: (id) =>
-      prisma.menuItem.findUnique({
-        where: { menu_item_id: id },
-        select: { menu_item_id: true, image_url: true },
-      }),
+      findActiveMenuItem(id, { menu_item_id: true, image_url: true }),
     updateImageUrl: (id, imageUrl) =>
       prisma.menuItem.update({
         where: { menu_item_id: id },
@@ -139,17 +160,42 @@ export const deleteItem = async (req, res) => {
         return res.status(400).json({ message: "Invalid ID format" });
 
     try {
-        const deleted = await prisma.menuItem.delete({
-            where: { menu_item_id: id },
-            select: { image_url: true },
+        const existing = await findActiveMenuItem(id, {
+            menu_item_id: true,
+            image_url: true,
+            _count: { select: { order_items: true } },
         });
-        await deleteCloudinaryImage(deleted.image_url);
-        res.json({ message: "Menu deleted" });
+        if (!existing) {
+            return res.status(404).json({ message: "Item not found" });
+        }
+
+        // Items with no order history can be deleted outright; items with orders are archived
+        // so past receipts, order history, and sales analytics remain intact.
+        if (existing._count.order_items === 0) {
+            try {
+                const deleted = await prisma.menuItem.delete({
+                    where: { menu_item_id: id },
+                    select: { image_url: true },
+                });
+                await deleteCloudinaryImage(deleted.image_url);
+                return res.json({ message: "Menu deleted", archived: false });
+            } catch (err) {
+                if (err.code !== "P2003") throw err;
+            }
+        }
+
+        await prisma.menuItem.update({
+            where: { menu_item_id: id },
+            data: { deleted_at: new Date(), available: false },
+        });
+        res.json({
+            message: "Menu item removed from menus (order history preserved)",
+            archived: true,
+        });
     } catch (error) {
         if (error.code === "P2025")
             return res.status(404).json({ message: "Item not found" });
-        if (error.code === "P2003")
-            return res.status(400).json({ code: "ITEM_HAS_ORDERS", message: "Can't delete this item — it has already been ordered before. Mark it unavailable instead." });
+        console.error("deleteItem error:", error);
         res.status(500).json({ message: "Internal Server Error" });
     }
 };

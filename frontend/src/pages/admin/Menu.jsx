@@ -280,7 +280,7 @@ export default function Menu() {
         busy={deletingItem}
         danger
         title={t("menu.deleteTitle")}
-        message={`This will permanently delete "${deleteItemTarget ? menuItemName(deleteItemTarget, lang) : ""}". This can't be undone.`}
+        message={`Remove "${deleteItemTarget ? menuItemName(deleteItemTarget, lang) : ""}" from the menu? Items with past orders will be archived to keep receipts and reports intact.`}
         confirmLabel={t("common.delete")}
         errorMsg={deleteItemError}
       />

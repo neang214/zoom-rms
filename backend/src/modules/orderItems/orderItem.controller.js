@@ -129,10 +129,10 @@ export const addItem = async (req, res) => {
 
     const menuItem = await prisma.menuItem.findUnique({
       where: { menu_item_id: parsedMenuItemId },
-      select: { price: true, available: true, item_name: true, category: { select: { type: true } } },
+      select: { price: true, available: true, deleted_at: true, item_name: true, category: { select: { type: true } } },
     });
 
-    if (!menuItem) {
+    if (!menuItem || menuItem.deleted_at) {
       return res.status(404).json({ message: "Menu item not found" });
     }
 

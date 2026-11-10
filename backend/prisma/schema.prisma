@@ -141,13 +141,14 @@ model MenuCategory {
 // ============================================================
 
 model MenuItem {
-  menu_item_id      Int     @id @default(autoincrement())
-  item_name         String  @db.VarChar(150)
-  item_name_km      String? @db.VarChar(150) // Khmer name; falls back to item_name when empty
+  menu_item_id      Int       @id @default(autoincrement())
+  item_name         String    @db.VarChar(150)
+  item_name_km      String?   @db.VarChar(150) // Khmer name; falls back to item_name when empty
   category_id       Int
-  price             Decimal @db.Decimal(10, 2)
-  available         Boolean @default(true)
+  price             Decimal   @db.Decimal(10, 2)
+  available         Boolean   @default(true)
   image_url         String?
+  deleted_at        DateTime?
 
   // Relations
   category    MenuCategory @relation(fields: [category_id], references: [category_id])
@@ -155,6 +156,7 @@ model MenuItem {
 
   @@index([category_id])
   @@index([available])
+  @@index([deleted_at])
   @@map("menu_items")
 }
 
