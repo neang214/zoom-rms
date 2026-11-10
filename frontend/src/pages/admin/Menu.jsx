@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react"
-import { Search, Plus, Tag } from "lucide-react"
+import { Search, Plus, Tag, UtensilsCrossed, Archive } from "lucide-react"
 import { Button, Input } from "@/components/ui"
 import { useMenuItemStore } from "../../context/menuItemContext"
 import { useMenuCategoryStore } from "../../context/menuCategoryContext"
 import api from "../../services/axios"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import {
-  MenuCategoryBar, MenuGrid, MenuFormDialog, AddCategoryDialog,
+  MenuCategoryBar, MenuGrid, MenuFormDialog, AddCategoryDialog, MenuItemSalesDialog,
 } from "@/components/admin/MenuParts"
 import { ConfirmModal } from "@/components/shared"
 import { useLang } from "@/i18n/LanguageContext"
-import { deleteErrorMessage, imageUrl, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
+import { cn, deleteErrorMessage, imageUrl, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
 
 function normalizeImageToJpg(file, maxWidth = 800, quality = 0.85) {
   return new Promise((resolve) => {
@@ -58,13 +58,20 @@ function normalizeImageToJpg(file, maxWidth = 800, quality = 0.85) {
 export default function Menu() {
   const { t, lang } = useLang()
   usePageTitle(t("nav.menu"))
-  const { items, fetchItems, createItem, updateItem, toggleItem, deleteItem, isLoading } = useMenuItemStore()
+  const {
+    items, archivedItems, fetchItems, fetchArchivedItems, fetchItemSales,
+    createItem, updateItem, toggleItem, deleteItem, restoreItem,
+    isLoading, archivedLoading,
+  } = useMenuItemStore()
   const { categories, fetchCategories, createCategory, deleteCategory } = useMenuCategoryStore()
 
+  const [activeTab, setActiveTab] = useState("active") // "active" | "archived"
   const [activeCat, setActiveCat] = useState("All")
   const [search, setSearch] = useState("")
+  const [restoringId, setRestoringId] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [editItem, setEditItem] = useState(null)
+  const [salesItem, setSalesItem] = useState(null)
   const [addCatOpen, setAddCatOpen] = useState(false)
   const [newCatName, setNewCatName] = useState("")
   const [newCatType, setNewCatType] = useState("food")
@@ -80,10 +87,12 @@ export default function Menu() {
 
   useEffect(() => {
     fetchItems()
+    fetchArchivedItems().catch(() => {})
     fetchCategories()
   }, [])
 
-  const filtered = (items || []).filter(i => {
+  const sourceItems = activeTab === "archived" ? (archivedItems || []) : (items || [])
+  const filtered = sourceItems.filter(i => {
     const matchesCat = activeCat === "All" || i.category_id === activeCat
     const cat = (categories || []).find(c => c.category_id === i.category_id)
     const matchesSearch = menuItemMatchesSearch(i, search, cat?.category_name)
@@ -231,22 +240,110 @@ export default function Menu() {
     if (activeCat === cat.category_id) setActiveCat("All")
   }
 
+  const handleTabSwitch = (tab) => {
+    setActiveTab(tab)
+    if (tab === "archived") {
+      fetchArchivedItems().catch(() => {})
+    }
+  }
+
+  const handleRestoreItem = async (item) => {
+    setRestoringId(item.menu_item_id)
+    try {
+      await restoreItem(item.menu_item_id)
+    } catch (err) {
+      console.error("Failed to restore menu item:", err)
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} className="pl-9" placeholder={t("menu.searchPlaceholder")} />
+      <div className="flex flex-wrap gap-3 items-center justify-between">
+        <div className="flex flex-wrap gap-3 items-center flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} className="pl-9" placeholder={t("menu.searchPlaceholder")} />
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={openAdd} size="sm" className="gap-1.5"><Plus size={14} /> {t("menu.addMenu")}</Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setErrorMsg(""); setAddCatOpen(true) }}><Tag size={14} /> {t("menu.category")}</Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={openAdd} size="sm" className="gap-1.5"><Plus size={14} /> {t("menu.addMenu")}</Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setErrorMsg(""); setAddCatOpen(true) }}><Tag size={14} /> {t("menu.category")}</Button>
+
+        {/* Active / Archived Tab Switcher */}
+        <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] w-fit">
+          <button
+            type="button"
+            onClick={() => handleTabSwitch("active")}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+              activeTab === "active"
+                ? "bg-[var(--color-primary)] text-white shadow-sm"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+            )}
+          >
+            <UtensilsCrossed size={14} />
+            <span>{t("menu.activeTab")}</span>
+            <span
+              className={cn(
+                "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+                activeTab === "active"
+                  ? "bg-white/20 text-white"
+                  : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+              )}
+            >
+              {(items || []).length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabSwitch("archived")}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer",
+              activeTab === "archived"
+                ? "bg-[var(--color-primary)] text-white shadow-sm"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+            )}
+          >
+            <Archive size={14} />
+            <span>{t("menu.archivedTab")}</span>
+            <span
+              className={cn(
+                "text-[11px] px-1.5 py-0.5 rounded-full font-bold",
+                activeTab === "archived"
+                  ? "bg-white/20 text-white"
+                  : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+              )}
+            >
+              {(archivedItems || []).length}
+            </span>
+          </button>
         </div>
       </div>
 
       <MenuCategoryBar categories={categories} activeCat={activeCat} onSelect={setActiveCat} />
 
-      <MenuGrid items={filtered} isLoading={isLoading} categoryName={categoryName} onEdit={openEdit} onDelete={requestDeleteItem} />
+      {activeTab === "archived" && (
+        <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <Archive size={14} className="text-[var(--color-muted)] shrink-0" />
+          <span>{t("menu.archivedBanner")}</span>
+        </div>
+      )}
+
+      <MenuGrid
+        items={filtered}
+        isLoading={activeTab === "archived" ? archivedLoading : isLoading}
+        categoryName={categoryName}
+        onEdit={openEdit}
+        onDelete={requestDeleteItem}
+        onViewSales={setSalesItem}
+        archivedMode={activeTab === "archived"}
+        onRestore={handleRestoreItem}
+        restoringId={restoringId}
+      />
 
       <MenuFormDialog
         open={addOpen} onClose={() => setAddOpen(false)} isEdit={false} item={null}
@@ -273,6 +370,14 @@ export default function Menu() {
         categories={categories} onDeleteCategory={handleDeleteCategory}
       />
 
+      <MenuItemSalesDialog
+        key={salesItem?.menu_item_id || "none"}
+        item={salesItem}
+        categoryName={categoryName}
+        onClose={() => setSalesItem(null)}
+        fetchItemSales={fetchItemSales}
+      />
+
       <ConfirmModal
         open={!!deleteItemTarget}
         onClose={() => setDeleteItemTarget(null)}
@@ -280,7 +385,7 @@ export default function Menu() {
         busy={deletingItem}
         danger
         title={t("menu.deleteTitle")}
-        message={`Remove "${deleteItemTarget ? menuItemName(deleteItemTarget, lang) : ""}" from the menu? Items with past orders will be archived to keep receipts and reports intact.`}
+        message={t("menu.deleteConfirmMsg").replace("{name}", deleteItemTarget ? menuItemName(deleteItemTarget, lang) : "")}
         confirmLabel={t("common.delete")}
         errorMsg={deleteItemError}
       />

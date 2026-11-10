@@ -78,11 +78,12 @@ model User {
 // ============================================================
 
 model Table {
-  table_id     Int     @id @default(autoincrement())
-  table_number String  @unique @db.VarChar(20)
+  table_id     Int       @id @default(autoincrement())
+  table_number String    @unique @db.VarChar(20)
   capacity     Int
-  is_available Boolean @default(true)
-  qr_token     String  @unique @db.VarChar(64)
+  is_available Boolean   @default(true)
+  qr_token     String    @unique @db.VarChar(64)
+  deleted_at   DateTime?
   // Unguessable per-table token used in QR codes instead of the sequential
   // table_id, so scanning the real printed QR is the only practical way
   // for a guest to land on a real table's order page.
@@ -91,6 +92,7 @@ model Table {
   orders Order[]
   guest_sessions GuestSession[]
 
+  @@index([deleted_at])
   @@map("tables")
 }
 

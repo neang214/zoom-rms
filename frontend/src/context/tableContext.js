@@ -3,7 +3,9 @@ import api from "../services/axios";
 
 export const useTableStore = create((set, get) => ({
   tables: [],
+  archivedTables: [],
   isLoading: false,
+  archivedLoading: false,
   error: null,
 
   fetchTables: async () => {
@@ -18,9 +20,6 @@ export const useTableStore = create((set, get) => ({
     }
   },
 
-  
-  
-  
   fetchTablesWithTokens: async () => {
     set({ isLoading: true, error: null });
     try {
@@ -29,6 +28,20 @@ export const useTableStore = create((set, get) => ({
       return res.data;
     } catch (error) {
       set({ error: error.message, isLoading: false });
+      if (error?.response?.status !== 401 && error?.response?.status !== 403) {
+        throw error;
+      }
+    }
+  },
+
+  fetchArchivedTables: async () => {
+    set({ archivedLoading: true, error: null });
+    try {
+      const res = await api.get("/tables/admin/archived");
+      set({ archivedTables: res.data, archivedLoading: false });
+      return res.data;
+    } catch (error) {
+      set({ error: error.message, archivedLoading: false });
       if (error?.response?.status !== 401 && error?.response?.status !== 403) {
         throw error;
       }
@@ -86,8 +99,28 @@ export const useTableStore = create((set, get) => ({
 
   deleteTable: async (id) => {
     try {
-      await api.delete(`/tables/${id}`);
+      const res = await api.delete(`/tables/${id}`);
       set({ tables: get().tables.filter(t => t.table_id !== id) });
+      if (res.data?.archived) {
+        await get().fetchArchivedTables();
+      }
+      return res.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  restoreTable: async (id) => {
+    try {
+      const res = await api.patch(`/tables/${id}/restore`);
+      const restored = res.data?.table;
+      set({
+        archivedTables: get().archivedTables.filter(t => t.table_id !== id),
+        tables: restored
+          ? [...get().tables.filter(t => t.table_id !== id), restored]
+          : get().tables,
+      });
+      return res.data;
     } catch (error) {
       throw error;
     }

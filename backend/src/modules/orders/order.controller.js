@@ -195,14 +195,14 @@ export const createOrder = async (req, res) => {
     const table = isGuest
       ? await prisma.table.findUnique({
           where: { table_id: req.guestSession.table_id },
-          select: { table_id: true, table_number: true },
+          select: { table_id: true, table_number: true, deleted_at: true },
         })
       : await prisma.table.findUnique({
           where: { table_id: parseInt(table_id) },
-          select: { table_id: true, table_number: true },
+          select: { table_id: true, table_number: true, deleted_at: true },
         });
 
-    if (!table)
+    if (!table || table.deleted_at)
       return res.status(404).json({ message: "Table not found" });
 
     let order;

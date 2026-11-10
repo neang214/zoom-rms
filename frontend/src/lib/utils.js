@@ -107,6 +107,7 @@ export function menuItemMatchesSearch(item, search, catName = null) {
 
 const DELETE_ERROR_KEYS = {
   TABLE_HAS_ORDERS: "errors.tableHasOrders",
+  TABLE_HAS_ACTIVE_ORDER: "errors.tableHasActiveOrder",
   USER_HAS_RECORDS: "errors.userHasRecords",
   ITEM_HAS_ORDERS: "errors.itemHasOrders",
   CATEGORY_HAS_ITEMS: "errors.categoryHasItems",

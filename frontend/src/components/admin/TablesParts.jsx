@@ -1,10 +1,11 @@
+import { useState, useEffect } from "react"
 import {
   Button, Badge, Card,
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   Input, Label, Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui"
-import { Eye, Pencil, Trash2, QrCode, Printer, RefreshCw } from "lucide-react"
+import { Eye, Pencil, Trash2, QrCode, Printer, RefreshCw, Copy, Check, RotateCcw, Archive } from "lucide-react"
 import TableQRCode, { buildTableOrderUrl } from "../TableQRCode"
 import { useLang } from "@/i18n/LanguageContext"
 import { menuItemName } from "@/lib/utils"
@@ -42,13 +43,20 @@ function itemTotal(order) {
   return order.order_items.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0)
 }
 
-export function TablesList({ tables, isLoading, onQr, onView, onEdit, onDelete }) {
+export function TablesList({
+  tables, isLoading, onQr, onView, onEdit, onDelete,
+  archivedMode = false, onRestore, restoringId = null,
+}) {
   const { t } = useLang()
   return (
     <Card>
       <div className="p-5 pb-4 border-b border-[var(--color-border)]">
-        <div className="font-semibold text-[var(--color-primary)]">{t("tables.restaurantTables")}</div>
-        <div className="text-xs text-[var(--color-muted)] mt-0.5">{t("tables.manageDining")}</div>
+        <div className="font-semibold text-[var(--color-primary)]">
+          {archivedMode ? t("tables.archivedTab") : t("tables.restaurantTables")}
+        </div>
+        <div className="text-xs text-[var(--color-muted)] mt-0.5">
+          {archivedMode ? t("tables.archivedBanner") : t("tables.manageDining")}
+        </div>
       </div>
       <div className="p-2">
         {isLoading ? (
@@ -69,23 +77,44 @@ export function TablesList({ tables, isLoading, onQr, onView, onEdit, onDelete }
                   <TableCell className="font-semibold">{tb.table_number}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{tb.capacity} {t("tables.guests")}</TableCell>
                   <TableCell>
-                    <Badge variant={!tb.is_available ? "default" : "outline"}>
-                      {tb.is_available ? t("tables.available") : t("tables.occupied")}
-                    </Badge>
+                    {archivedMode ? (
+                      <Badge variant="outline">
+                        <Archive size={11} />
+                        {t("tables.archivedBadge")}
+                      </Badge>
+                    ) : (
+                      <Badge variant={tb.is_available ? "success" : "warning"}>
+                        {tb.is_available ? t("tables.available") : t("tables.occupied")}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => onQr(tb)} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors"><QrCode size={14} /></button>
-                      <button onClick={() => onView(tb)} className="p-1.5 rounded-lg hover:bg-[var(--color-info-muted)] text-[var(--color-muted)] hover:text-[var(--color-info)] transition-colors"><Eye size={14} /></button>
-                      <button onClick={() => onEdit(tb)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors"><Pencil size={14} /></button>
-                      <button onClick={() => onDelete(tb.table_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors"><Trash2 size={14} /></button>
-                    </div>
+                    {archivedMode ? (
+                      <button
+                        type="button"
+                        onClick={() => onRestore?.(tb)}
+                        disabled={restoringId === tb.table_id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RotateCcw size={12} className={restoringId === tb.table_id ? "animate-spin" : ""} />
+                        {t("tables.restore")}
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => onQr(tb)} title={t("tables.tableQrCode")} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"><QrCode size={14} /></button>
+                        <button onClick={() => onView(tb)} title={t("tables.activeOrder")} className="p-1.5 rounded-lg hover:bg-[var(--color-info-muted)] text-[var(--color-muted)] hover:text-[var(--color-info)] transition-colors cursor-pointer"><Eye size={14} /></button>
+                        <button onClick={() => onEdit(tb)} title={t("tables.editTitle")} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors cursor-pointer"><Pencil size={14} /></button>
+                        <button onClick={() => onDelete(tb.table_id)} title={t("common.delete")} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"><Trash2 size={14} /></button>
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
               {(!tables || tables.length === 0) && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-sm text-[var(--color-muted)] py-8">{t("tables.noTablesFound")}</TableCell>
+                  <TableCell colSpan={4} className="text-center text-sm text-[var(--color-muted)] py-8">
+                    {archivedMode ? t("tables.noArchived") : t("tables.noTablesFound")}
+                  </TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -207,25 +236,50 @@ export function TableViewDialog({ table, order, loading, onClose }) {
 
 export function SingleQrDialog({ table, onClose, onRegenerate, regenerating, onPrint }) {
   const { t } = useLang()
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    setCopied(false)
+  }, [table?.table_id, table?.qr_token])
+
+  const orderUrl = table ? buildTableOrderUrl(table) : ""
+  const handleCopy = async () => {
+    if (!orderUrl) return
+    try {
+      await navigator.clipboard.writeText(orderUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }
+
   return (
     <Dialog open={!!table} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         {table && (
           <>
-            <DialogHeader>
+            <DialogHeader className="pr-8">
               <DialogTitle>{t("tables.tableQrCode")}</DialogTitle>
               <DialogDescription>{t("tables.scanToOrder")} {table.table_number}</DialogDescription>
             </DialogHeader>
             <div id="single-qr-print" className="flex justify-center py-2">
               <TableQRCode table={table} size={180} />
             </div>
-            <div className="text-center text-xs text-[var(--color-muted)] break-all px-2">{buildTableOrderUrl(table)}</div>
-            <div className="flex gap-2 justify-end mt-2">
-              <Button variant="outline" onClick={onClose}>{t("common.close")}</Button>
-              <Button variant="outline" onClick={() => onRegenerate(table.table_id)} disabled={regenerating} className="gap-1.5">
-                <RefreshCw size={14} className={regenerating ? "animate-spin" : ""} /> {regenerating ? t("tables.regenerating") : t("tables.regenerateQr")}
+            <div className="text-center text-xs text-[var(--color-muted)] break-all px-2 bg-[var(--color-background)] rounded-xl py-2 border border-[var(--color-border)]">
+              {orderUrl}
+            </div>
+            <div className="flex flex-wrap gap-2 justify-end mt-2">
+              <Button variant="outline" onClick={handleCopy} className="gap-1.5">
+                {copied ? <Check size={14} className="text-[var(--color-primary)]" /> : <Copy size={14} />}
+                {copied ? t("tables.copied") : t("tables.copyLink")}
               </Button>
-              <Button onClick={() => onPrint("single-qr-print")} className="gap-1.5"><Printer size={14} /> {t("tables.print")}</Button>
+              <Button variant="outline" onClick={() => onRegenerate(table.table_id)} disabled={regenerating} className="gap-1.5">
+                <RefreshCw size={14} className={regenerating ? "animate-spin" : ""} />
+                {regenerating ? t("tables.regenerating") : t("tables.regenerateQr")}
+              </Button>
+              <Button onClick={() => onPrint("single-qr-print")} className="gap-1.5">
+                <Printer size={14} /> {t("tables.print")}
+              </Button>
+              <Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>
             </div>
           </>
         )}

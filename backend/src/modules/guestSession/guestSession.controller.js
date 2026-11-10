@@ -11,10 +11,10 @@ export const createSession = async (req, res) => {
   try {
     const table = await prisma.table.findUnique({
       where: { qr_token: String(qr_token) },
-      select: { table_id: true, table_number: true },
+      select: { table_id: true, table_number: true, deleted_at: true },
     });
 
-    if (!table) {
+    if (!table || table.deleted_at) {
       return res.status(404).json({ message: "Invalid or expired table QR code" });
     }
 

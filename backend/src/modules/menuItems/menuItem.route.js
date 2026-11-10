@@ -7,7 +7,19 @@ import * as menuItemController from "./menuItem.controller.js";
 const router = express.Router();
 
 router.get("/", menuItemController.getAllItems);
+router.get(
+  "/archived",
+  authenticate,
+  authorize("admin"),
+  menuItemController.getArchivedItems,
+);
 router.get("/category/:categoryId", menuItemController.getItemsByCategory);
+router.get(
+  "/:id/sales",
+  authenticate,
+  authorize("admin"),
+  menuItemController.getItemSales,
+);
 router.get("/:id", menuItemController.getItem);
 router.post(
   "/",
@@ -36,6 +48,12 @@ router.patch(
   authenticate,
   authorize("admin", "kitchen", "barista"),
   menuItemController.toggleItem,
+);
+router.patch(
+  "/:id/restore",
+  authenticate,
+  authorize("admin"),
+  menuItemController.restoreItem,
 );
 router.delete(
   "/:id",

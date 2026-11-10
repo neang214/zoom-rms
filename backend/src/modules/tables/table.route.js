@@ -7,16 +7,20 @@ import * as tableController from "./table.controller.js";
 const router = express.Router();
 
 router.get("/", tableController.getAllTables);
-router.get("/:id", tableController.getTable);
-
 router.get(
     "/admin/all",
     authenticate,
     authorize("admin"),
     tableController.getAllTablesAdmin,
 );
-
+router.get(
+    "/admin/archived",
+    authenticate,
+    authorize("admin"),
+    tableController.getArchivedTables,
+);
 router.get("/qr/:token", guestOrderLimiter, tableController.getTableByToken);
+router.get("/:id", tableController.getTable);
 
 router.post("/", authenticate, authorize("admin"), tableController.createTable);
 router.put(
@@ -37,6 +41,13 @@ router.patch(
     authenticate,
     authorize("admin"),
     tableController.regenerateQrToken,
+);
+
+router.patch(
+    "/:id/restore",
+    authenticate,
+    authorize("admin"),
+    tableController.restoreTable,
 );
 
 router.delete(
