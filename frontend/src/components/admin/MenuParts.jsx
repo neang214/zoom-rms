@@ -63,7 +63,7 @@ export function ImagePicker({ preview, onSelect, onClear }) {
         }}
       />
       {hasValidPreview ? (
-        <div className="relative aspect-[5/4] max-w-xs mx-auto rounded-xl overflow-hidden border border-[var(--color-border)] group">
+        <div className="relative w-44 h-44 aspect-square mx-auto rounded-2xl overflow-hidden border border-[var(--color-border)] group">
           <img
             src={preview}
             alt="preview"
@@ -81,10 +81,10 @@ export function ImagePicker({ preview, onSelect, onClear }) {
         </div>
       ) : (
         <button type="button" onClick={() => inputRef.current?.click()}
-          className="w-full aspect-[5/4] max-w-xs mx-auto rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-primary)] flex flex-col items-center justify-center gap-2 text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)]/40 transition-all">
+          className="w-44 h-44 aspect-square mx-auto rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-primary)] flex flex-col items-center justify-center gap-2 text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)]/40 transition-all">
           <ImagePlus size={24} />
           <span className="text-xs font-medium">{t("menu.clickToUpload")}</span>
-          <span className="text-[10px] text-[var(--color-muted)]">PNG or JPG (5:4)</span>
+          <span className="text-[10px] text-[var(--color-muted)]">PNG or JPG (1:1 Square)</span>
         </button>
       )}
     </div>
@@ -155,7 +155,7 @@ export function MenuGrid({ items, isLoading, categoryName, onEdit, onDelete }) {
             !item.available && "opacity-65"
           )}
         >
-          <div className="relative aspect-[5/4] overflow-hidden bg-[var(--color-border)]/40 shrink-0">
+          <div className="relative aspect-square overflow-hidden bg-[var(--color-border)]/40 shrink-0">
             <MenuItemImage item={item} lang={lang} />
             {!item.available ? (
               <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">

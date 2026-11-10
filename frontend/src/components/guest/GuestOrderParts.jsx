@@ -171,7 +171,7 @@ export function GuestMenuGrid({ items, cart, onAdd, onRemove }) {
               !isAvailable && "opacity-60"
             )}
           >
-            <div className="relative aspect-[5/4] overflow-hidden bg-[var(--color-border)]/40 shrink-0">
+            <div className="relative aspect-square overflow-hidden bg-[var(--color-border)]/40 shrink-0">
               <img
                 src={imageUrl(item.image_url, FALLBACK_IMG)}
                 alt={menuItemName(item, lang)}
