@@ -70,12 +70,12 @@ export default function Stock() {
     const matchesUnit = catFilter === "All categories" || i.unit?.unit_name === catFilter
     const matchesSearch = i.item_name?.toLowerCase().includes(search.toLowerCase())
     const matchesType = typeFilter === "all" || (i.stock_type || "both") === typeFilter
-    const isLow = lowStockIds.has(i.stock_id) || (i.min_level != null && Number(i.quantity) < Number(i.min_level))
+    const isLow = lowStockIds.has(i.stock_id) || Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) < Number(i.min_level))
     const matchesLow = !lowOnly || isLow
     return matchesUnit && matchesSearch && matchesType && matchesLow
   })
 
-  const lowStockCount = (lowStock || []).length || (stockItems || []).filter(i => i.min_level != null && Number(i.quantity) < Number(i.min_level)).length
+  const lowStockCount = (lowStock || []).length || (stockItems || []).filter(i => Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) < Number(i.min_level))).length
   const unitNames = [...new Set((stockItems || []).map(i => i.unit?.unit_name).filter(Boolean))]
   const pendingPoCount = (stockOrders || []).filter(po => po.status !== "Received").length
 
@@ -97,7 +97,7 @@ export default function Stock() {
   }
 
   const openAdd = () => {
-    setForm({ item_name: "", quantity: "", unit_id: units[0]?.unit_id || "", min_level: "", stock_type: "both" })
+    setForm({ item_name: "", quantity: "0", unit_id: units[0]?.unit_id || "", min_level: "", stock_type: "both" })
     setImageFile(null)
     setImagePreview(null)
     setErrorMsg("")
@@ -105,14 +105,13 @@ export default function Stock() {
   }
 
   const handleAdd = async () => {
-    if (!form.item_name || form.quantity === "" || !form.unit_id || form.min_level === "") {
+    if (!form.item_name?.trim() || !form.unit_id || form.min_level === "") {
       setErrorMsg("All fields are required.")
       return
     }
-    const qty = parseFloat(form.quantity)
     const min = parseFloat(form.min_level)
-    if (isNaN(qty) || qty < 0 || isNaN(min) || min < 0) {
-      setErrorMsg("Quantity and min level must be valid non-negative numbers.")
+    if (isNaN(min) || min < 0) {
+      setErrorMsg("Min level must be a valid non-negative number.")
       return
     }
     setSaving(true)
@@ -120,7 +119,7 @@ export default function Stock() {
     try {
       const created = await createStock({
         item_name: form.item_name.trim(),
-        quantity: qty,
+        quantity: 0,
         unit_id: parseInt(form.unit_id),
         min_level: min,
         stock_type: form.stock_type,
@@ -416,7 +415,7 @@ export default function Stock() {
       />
 
       <StockFormDialog
-        open={addOpen} onClose={() => setAddOpen(false)}
+        open={addOpen} onClose={() => setAddOpen(false)} isEdit={false}
         title={t("stock.addItem")} description={t("stock.subtitle")}
         form={form} setForm={setForm} units={units}
         imagePreview={imagePreview} onImageSelect={handleImageSelect} onImageClear={handleImageClear}
@@ -424,7 +423,7 @@ export default function Stock() {
       />
 
       <StockFormDialog
-        open={!!editItem} onClose={() => setEditItem(null)}
+        open={!!editItem} onClose={() => setEditItem(null)} isEdit
         title={t("stock.editItem")} description={t("stock.subtitle")}
         form={form} setForm={setForm} units={units}
         imagePreview={imagePreview} onImageSelect={handleImageSelect} onImageClear={handleImageClear}

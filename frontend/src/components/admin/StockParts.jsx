@@ -10,8 +10,16 @@ import { cn, imageUrl, deleteErrorMessage } from "@/lib/utils"
 import { useLang } from "@/i18n/LanguageContext"
 
 export function stockStatus(item) {
-  if (item.min_level == null) return "InStock"
+  if (Number(item?.quantity) <= 0) return "OutOfStock"
+  if (item?.min_level == null) return "InStock"
   return Number(item.quantity) < Number(item.min_level) ? "LowStock" : "InStock"
+}
+
+function stockStatusLabel(item, t) {
+  const status = stockStatus(item)
+  if (status === "OutOfStock") return t("stock.outOfStock")
+  if (status === "LowStock") return t("stock.lowStock")
+  return t("stock.inStockStatus")
 }
 
 export const STOCK_TYPES = {
@@ -165,7 +173,7 @@ export function StockStats({ stockItems, lowStockCount, unitNames, stockOrdersCo
   )
 }
 
-export function StockFormFields({ form, setForm, units, imagePreview, onImageSelect, onImageClear }) {
+export function StockFormFields({ form, setForm, units, imagePreview, onImageSelect, onImageClear, isEdit = false }) {
   const { t } = useLang()
   return (
     <div className="space-y-4">
@@ -177,10 +185,16 @@ export function StockFormFields({ form, setForm, units, imagePreview, onImageSel
         <Label>{t("stock.itemName")}</Label>
         <Input value={form.item_name} onChange={e => setForm(p => ({ ...p, item_name: e.target.value }))} />
       </div>
-      <div className="space-y-1.5">
-        <Label>{t("stock.quantity")}</Label>
-        <Input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
-      </div>
+      {isEdit ? (
+        <div className="space-y-1.5">
+          <Label>{t("stock.quantity")}</Label>
+          <Input type="number" min="0" step="0.01" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
+        </div>
+      ) : (
+        <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-primary-muted)]/50 border border-[var(--color-primary)]/20 rounded-xl px-3 py-2">
+          {t("stock.startsAtZeroHint")}
+        </div>
+      )}
       <div className="space-y-1.5">
         <Label>{t("stock.unit")}</Label>
         <Select value={form.unit_id ? String(form.unit_id) : ""} onValueChange={v => setForm(p => ({ ...p, unit_id: parseInt(v) }))}>
@@ -290,7 +304,7 @@ export function StockTable({
                   <TableCell>{Number(item.quantity)} {item.unit?.unit_name}</TableCell>
                   <TableCell>
                     <Badge variant={stockStatus(item) === "InStock" ? "success" : "danger"}>
-                      {stockStatus(item) === "InStock" ? t("stock.inStockStatus") : t("stock.lowStock")}
+                      {stockStatusLabel(item, t)}
                     </Badge>
                   </TableCell>
                   <TableCell><StockTypeBadge type={item.stock_type} /></TableCell>
@@ -479,16 +493,16 @@ export function StockOrderDialog({ open, onClose, form, setForm, stockItems = []
   )
 }
 
-export function StockFormDialog({ open, onClose, title, description, form, setForm, units, imagePreview, onImageSelect, onImageClear, errorMsg, saving, onSubmit, submitLabel }) {
+export function StockFormDialog({ open, onClose, isEdit = false, title, description, form, setForm, units, imagePreview, onImageSelect, onImageClear, errorMsg, saving, onSubmit, submitLabel }) {
   const { t } = useLang()
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <div className="mt-2"><StockFormFields form={form} setForm={setForm} units={units}
+        <div className="mt-2"><StockFormFields form={form} setForm={setForm} units={units} isEdit={isEdit}
           imagePreview={imagePreview} onImageSelect={onImageSelect} onImageClear={onImageClear} /></div>
         {errorMsg && <div className="text-sm text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2 mt-3">{errorMsg}</div>}
         <div className="flex gap-2 justify-end mt-4">
@@ -519,7 +533,7 @@ export function StockViewDialog({ item, onClose }) {
                 { label: t("stock.quantity"), value: `${Number(item.quantity)} ${item.unit?.unit_name}`, color: "bg-[var(--color-primary-muted)]" },
                 { label: t("stock.minLevel"), value: item.min_level != null ? `${Number(item.min_level)} ${item.unit?.unit_name}` : "—", color: "bg-[var(--color-accent-muted)]" },
                 { label: t("stock.unit"), value: item.unit?.unit_name, color: "bg-[var(--color-info-muted)]" },
-                { label: t("stock.status"), value: stockStatus(item) === "InStock" ? t("stock.inStockStatus") : t("stock.lowStock"), color: "bg-[var(--color-primary-muted)]" },
+                { label: t("stock.status"), value: stockStatusLabel(item, t), color: "bg-[var(--color-primary-muted)]" },
               ].map(({ label, value, color }) => (
                 <div key={label} className={`rounded-xl p-3 ${color}`}>
                   <div className="text-xs text-[var(--color-muted)] mb-1">{label}</div>

@@ -38,8 +38,8 @@ export const getLowStock = async (req, res) => {
       SELECT s.*, u.unit_name 
       FROM stock s
       JOIN units u ON s.unit_id = u.unit_id
-      WHERE s.min_level IS NOT NULL 
-      AND s.quantity < s.min_level
+      WHERE s.quantity <= 0
+      OR (s.min_level IS NOT NULL AND s.quantity < s.min_level)
     `;
         res.json(lowStock);
     } catch (error) {
@@ -50,18 +50,30 @@ export const getLowStock = async (req, res) => {
 
 export const createStock = async (req, res) => {
     const { item_name, quantity, unit_id, min_level, stock_type } = req.body;
-    if (!item_name || !quantity || !unit_id || !min_level)
+    const cleanName = String(item_name || "").trim();
+    const hasMin = min_level !== undefined && min_level !== null && min_level !== "";
+
+    if (!cleanName || !unit_id || !hasMin)
         return res.status(400).json({ message: "All fields are required" });
+
+    const parsedUnitId = parseInt(unit_id, 10);
+    const parsedMin = parseFloat(min_level);
+    const hasQty = quantity !== undefined && quantity !== null && quantity !== "";
+    const parsedQty = hasQty ? parseFloat(quantity) : 0;
+
+    if (!Number.isInteger(parsedUnitId) || parsedUnitId <= 0 || isNaN(parsedMin) || parsedMin < 0 || isNaN(parsedQty) || parsedQty < 0)
+        return res.status(400).json({ message: "Invalid quantity, min level, or unit" });
 
     try {
         const stock = await prisma.stock.create({
             data: {
-                item_name,
-                quantity: parseFloat(quantity),
-                unit_id: parseInt(unit_id),
-                min_level: parseFloat(min_level),
+                item_name: cleanName,
+                quantity: parsedQty,
+                unit_id: parsedUnitId,
+                min_level: parsedMin,
                 stock_type: stock_type || "both",
             },
+            include: { unit: true },
         });
         res.status(201).json(stock);
     } catch {

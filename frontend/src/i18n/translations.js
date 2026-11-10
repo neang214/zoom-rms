@@ -399,6 +399,8 @@ export const translations = {
     "stock.additionalQty": "Additional Quantity",
     "stock.current": "Current",
     "stock.viewTitle": "Stock Item Details",
+    "stock.startsAtZeroHint": "New items start at 0 in stock. Create a Purchase Order (or use +) to add stock after creating.",
+    "stock.outOfStock": "Out of Stock",
 
     // Admin & Tables
     "tables.title": "Restaurant Tables",
@@ -1002,6 +1004,8 @@ export const translations = {
     "stock.additionalQty": "បរិមាណបន្ថែម",
     "stock.current": "បច្ចុប្បន្ន",
     "stock.viewTitle": "ព័ត៌មានលម្អិតទំនិញស្តុក",
+    "stock.startsAtZeroHint": "ទំនិញថ្មីចាប់ផ្តើមពីចំនួន 0។ សូមបង្កើតការបញ្ជាទិញពីអ្នកផ្គត់ផ្គង់ (PO) ឬចុច (+) ដើម្បីបន្ថែមស្តុកបន្ទាប់ពីបង្កើតរួច។",
+    "stock.outOfStock": "អស់ពីស្តុក",
 
     // Admin & Tables
     "tables.title": "តារាងតុក្នុងហាង",
