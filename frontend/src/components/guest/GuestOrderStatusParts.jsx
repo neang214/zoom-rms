@@ -7,6 +7,14 @@ const FALLBACK_IMG = "https://images.unsplash.com/photo-1569718212165-3a8278d5f6
 
 export const statusSteps = ["Pending", "Preparing", "Served", "Paid"]
 
+const itemStatusOrder = ["Preparing", "Pending", "Ready"]
+
+const itemStatusMeta = {
+  Preparing: { labelKey: "status.preparing", icon: Flame,        color: "text-[var(--color-warning)]",        badgeBg: "bg-[var(--color-accent-muted)]" },
+  Pending:   { labelKey: "status.pending",   icon: Clock,        color: "text-[var(--color-text-secondary)]", badgeBg: "bg-[var(--color-border)]/70" },
+  Ready:     { labelKey: "status.ready",     icon: CheckCircle2, color: "text-[var(--color-primary)]",        badgeBg: "bg-[var(--color-primary-muted)]" },
+}
+
 const statusMeta = {
   Pending:   { key: "guest.statusReceived",  icon: Clock,        color: "text-[var(--color-text-secondary)]",  bg: "bg-[var(--color-border)]" },
   Preparing: { key: "guest.statusPreparing", icon: Flame,        color: "text-[var(--color-warning)]", bg: "bg-[var(--color-accent-muted)]" },
@@ -41,6 +49,14 @@ export function StatusContent({ loading, order, token, navigate, statusKey, curr
   const { t, lang } = useLang()
   const meta = statusMeta[statusKey] || statusMeta.Pending
   const StatusIcon = meta.icon
+  const items = order?.order_items || []
+  const itemGroups = itemStatusOrder
+    .map((status) => ({
+      status,
+      meta: itemStatusMeta[status],
+      items: items.filter((oi) => (oi.status || "Pending") === status),
+    }))
+    .filter((group) => group.items.length > 0)
   return (
     <div className="px-4 sm:px-6 py-6 space-y-5 max-w-2xl mx-auto">
       {loading ? (
@@ -106,26 +122,48 @@ export function StatusContent({ loading, order, token, navigate, statusKey, curr
 
           <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5">
             <div className="font-semibold text-sm sm:text-base text-[var(--color-text)] mb-4">{t("guest.yourOrder")}</div>
-            <div className="space-y-3.5">
-              {order.order_items?.map(oi => (
-                <div key={oi.order_item_id} className="flex items-center gap-3.5">
-                  <img
-                    src={imageUrl(oi.menu_item?.image_url || oi.image_url, FALLBACK_IMG)}
-                    alt={menuItemName(oi.menu_item, lang)}
-                    onError={(e) => {
-                      if (e.currentTarget.src !== FALLBACK_IMG) {
-                        e.currentTarget.src = FALLBACK_IMG
-                      }
-                    }}
-                    className="w-13 h-13 rounded-xl object-cover shrink-0 bg-[var(--color-border)]/40"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-[var(--color-text)] truncate">{menuItemName(oi.menu_item, lang)}</div>
-                    <div className="text-xs text-[var(--color-muted)]">${Number(oi.unit_price).toFixed(2)} × {oi.quantity}</div>
+            <div className="space-y-4">
+              {itemGroups.map((group) => {
+                const GroupIcon = group.meta.icon
+                const groupQty = group.items.reduce((s, oi) => s + oi.quantity, 0)
+                return (
+                  <div key={group.status} className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--color-border)]/60">
+                      <span className={cn("inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full", group.meta.badgeBg, group.meta.color)}>
+                        <GroupIcon size={12} />
+                        {t(group.meta.labelKey)}
+                      </span>
+                      <span className="text-xs text-[var(--color-muted)]">
+                        {groupQty} {t("station.items")}
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {group.items.map(oi => (
+                        <div key={oi.order_item_id} className="flex items-center gap-3.5">
+                          <img
+                            src={imageUrl(oi.menu_item?.image_url || oi.image_url, FALLBACK_IMG)}
+                            alt={menuItemName(oi.menu_item, lang)}
+                            onError={(e) => {
+                              if (e.currentTarget.src !== FALLBACK_IMG) {
+                                e.currentTarget.src = FALLBACK_IMG
+                              }
+                            }}
+                            className="w-13 h-13 rounded-xl object-cover shrink-0 bg-[var(--color-border)]/40"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-[var(--color-text)] truncate">{menuItemName(oi.menu_item, lang)}</div>
+                            <div className="text-xs text-[var(--color-muted)]">${Number(oi.unit_price).toFixed(2)} × {oi.quantity}</div>
+                            {oi.note && (
+                              <div className="text-[11px] text-[var(--color-warning)] truncate mt-0.5">{oi.note}</div>
+                            )}
+                          </div>
+                          <div className="text-sm font-semibold text-[var(--color-text)]">${(Number(oi.unit_price) * oi.quantity).toFixed(2)}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-[var(--color-text)]">${(Number(oi.unit_price) * oi.quantity).toFixed(2)}</div>
-                </div>
-              ))}
+                )
+              })}
             </div>
             <div className="border-t border-[var(--color-border)] mt-4 pt-4 flex justify-between text-base font-bold">
               <span className="text-[var(--color-text)]">{t("common.total")}</span>

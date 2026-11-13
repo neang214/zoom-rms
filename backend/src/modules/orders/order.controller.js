@@ -12,6 +12,7 @@ export const getAllOrders = async (req, res) => {
         table: { select: { table_number: true } },
         user:  { select: { username: true, role: true } },
         order_items: {
+          orderBy: { order_item_id: "asc" },
           include: {
             menu_item: { select: { item_name: true, item_name_km: true, price: true } },
           },
@@ -54,6 +55,7 @@ export const getOrderById = async (req, res) => {
         table: { select: { table_number: true } },
         user:  { select: { username: true, role: true } },
         order_items: {
+          orderBy: { order_item_id: "asc" },
           include: {
             menu_item: { select: { item_name: true, item_name_km: true, price: true } },
           },
@@ -78,6 +80,7 @@ async function findActiveOrderForTable(table_id) {
     },
     include: {
       order_items: {
+        orderBy: { order_item_id: "asc" },
         include: {
           menu_item: { select: { item_name: true, item_name_km: true, price: true, image_url: true } },
         },
@@ -123,6 +126,7 @@ export const getUnconfirmedOrders = async (req, res) => {
       include: {
         table: { select: { table_number: true } },
         order_items: {
+          orderBy: { order_item_id: "asc" },
           include: {
             menu_item: { select: { item_name: true, item_name_km: true, price: true } },
           },
@@ -362,12 +366,16 @@ export const deleteOrder = async (req, res) => {
   try {
     const order = await prisma.order.findUnique({
       where: { order_id: parseInt(req.params.id) },
+      include: { order_items: { select: { status: true } } },
     });
 
     if (!order)
       return res.status(404).json({ message: "Order not found" });
 
-    if (order.status !== "Pending") {
+    if (
+      order.status !== "Pending" ||
+      order.order_items.some((item) => item.status !== "Pending")
+    ) {
       return res.status(400).json({
         message: "Cannot cancel order that is already being prepared",
       });

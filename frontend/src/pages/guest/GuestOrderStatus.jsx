@@ -29,13 +29,6 @@ export default function GuestOrderStatus() {
   useSocketTable(table?.table_id)
   useGuestOrderSound()
 
-  useSocketEvent("order:status_changed", (data) => {
-    setOrder(prev => prev ? { ...prev, status: data.status } : prev)
-  })
-  useSocketEvent("order_item:new", () => refetchOrder())
-  useSocketEvent("order_item:status_changed", () => refetchOrder())
-  useSocketEvent("order:confirmed", () => refetchOrder())
-
   const refetchOrder = async () => {
     if (!table?.table_id) return
     try {
@@ -45,6 +38,17 @@ export default function GuestOrderStatus() {
       console.error(err)
     }
   }
+
+  useSocketEvent("order:status_changed", (data) => {
+    if (data?.status) {
+      setOrder(prev => prev && (!data.order_id || prev.order_id === data.order_id) ? { ...prev, status: data.status } : prev)
+    }
+  })
+  useSocketEvent("order_item:new", () => refetchOrder())
+  useSocketEvent("order_item:status_changed", () => refetchOrder())
+  useSocketEvent("order_item:deleted", () => refetchOrder())
+  useSocketEvent("order:confirmed", () => refetchOrder())
+  useSocketEvent("order:deleted", () => setOrder(null))
 
   useEffect(() => {
     if (!token) {

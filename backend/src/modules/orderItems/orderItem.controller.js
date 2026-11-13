@@ -3,6 +3,56 @@ import { verifyGuestLocation } from "../../utils/geo.js";
 import { getIO } from "../../sockets/index.js";
 import { attachQueueNumbers } from "../../utils/queueNumber.js";
 
+/**
+ * Derive an Order's active status from its items (when not already Paid).
+ */
+export function computeOrderStatus(items) {
+  if (!items || items.length === 0) return "Pending";
+  if (items.every((item) => item.status === "Ready")) return "Served";
+  if (items.some((item) => item.status === "Preparing")) return "Preparing";
+  return "Pending";
+}
+
+function httpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+async function syncOrderStatusInTx(tx, orderId) {
+  const currentOrder = await tx.order.findUnique({
+    where: { order_id: orderId },
+    select: { order_id: true, status: true, table_id: true },
+  });
+
+  if (!currentOrder || currentOrder.status === "Paid") return null;
+
+  const allItems = await tx.orderItem.findMany({
+    where: { order_id: orderId },
+    select: { status: true },
+  });
+
+  const nextStatus = computeOrderStatus(allItems);
+  if (currentOrder.status === nextStatus) return null;
+
+  return tx.order.update({
+    where: { order_id: orderId },
+    data: { status: nextStatus },
+  });
+}
+
+function emitOrderStatusChanged(io, updatedOrder) {
+  if (!updatedOrder) return;
+  io.to("role:cashier")
+    .to("role:kitchen")
+    .to("role:barista")
+    .to("role:admin")
+    .emit("order:status_changed", updatedOrder);
+  if (updatedOrder.table_id) {
+    io.to(`table:${updatedOrder.table_id}`).emit("order:status_changed", updatedOrder);
+  }
+}
+
 const getQueue = async (type) => {
   const items = await prisma.orderItem.findMany({
     where: {
@@ -30,9 +80,10 @@ const getQueue = async (type) => {
         },
       },
     },
-    orderBy: {
-      order: { order_date: "asc" },
-    },
+    orderBy: [
+      { order: { order_date: "asc" } },
+      { order_item_id: "asc" },
+    ],
   });
 
   
@@ -91,9 +142,13 @@ export const addItem = async (req, res) => {
     });
   }
 
-  const parsedOrderId = parseInt(order_id);
-  const parsedMenuItemId = parseInt(menu_item_id);
-  const parsedQuantity = parseInt(quantity);
+  const parsedOrderId = parseInt(order_id, 10);
+  const parsedMenuItemId = parseInt(menu_item_id, 10);
+  const parsedQuantity = parseInt(quantity, 10);
+
+  if (!Number.isInteger(parsedOrderId) || parsedOrderId < 1 || !Number.isInteger(parsedMenuItemId) || parsedMenuItemId < 1) {
+    return res.status(400).json({ message: "Invalid order_id or menu_item_id" });
+  }
 
   if (!Number.isInteger(parsedQuantity) || parsedQuantity < 1 || parsedQuantity > 50) {
     return res.status(400).json({ message: "quantity must be between 1 and 50" });
@@ -105,28 +160,6 @@ export const addItem = async (req, res) => {
   }
 
   try {
-    const order = await prisma.order.findUnique({
-      where: { order_id: parsedOrderId },
-      select: { order_id: true, status: true, confirmed: true, table_id: true },
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    // req.guestSession is attached by requireGuestSessionIfGuestChannel
-    // and already proves this device holds a valid session for a specific
-    // table — just compare it to the order being modified.
-    if (isGuest && order.table_id !== req.guestSession.table_id) {
-      return res.status(403).json({ message: "This order does not belong to this table" });
-    }
-
-    if (order.status === "Paid") {
-      return res
-        .status(400)
-        .json({ message: "This order has already been paid and is closed" });
-    }
-
     const menuItem = await prisma.menuItem.findUnique({
       where: { menu_item_id: parsedMenuItemId },
       select: { price: true, available: true, deleted_at: true, item_name: true, category: { select: { type: true } } },
@@ -140,18 +173,48 @@ export const addItem = async (req, res) => {
       return res.status(400).json({ message: "Menu item is not available" });
     }
 
-    const orderItem = await prisma.orderItem.create({
-      data: {
-        order_id: parsedOrderId,
-        menu_item_id: parsedMenuItemId,
-        quantity: parsedQuantity,
-        unit_price: menuItem.price,
-        note: note ? String(note).slice(0, 255) : null,
-      },
-      include: {
-        menu_item: { select: { item_name: true, item_name_km: true, price: true } },
-        order: { select: { order_id: true, table: { select: { table_number: true } } } },
-      },
+    const { order, orderItem, updatedOrder } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${parsedOrderId})`;
+
+      const existingOrder = await tx.order.findUnique({
+        where: { order_id: parsedOrderId },
+        select: { order_id: true, status: true, confirmed: true, table_id: true },
+      });
+
+      if (!existingOrder) {
+        throw httpError(404, "Order not found");
+      }
+
+      // req.guestSession is attached by requireGuestSessionIfGuestChannel
+      // and already proves this device holds a valid session for a specific
+      // table — just compare it to the order being modified.
+      if (isGuest && existingOrder.table_id !== req.guestSession.table_id) {
+        throw httpError(403, "This order does not belong to this table");
+      }
+
+      if (existingOrder.status === "Paid") {
+        throw httpError(400, "This order has already been paid and is closed");
+      }
+
+      const createdItem = await tx.orderItem.create({
+        data: {
+          order_id: parsedOrderId,
+          menu_item_id: parsedMenuItemId,
+          quantity: parsedQuantity,
+          unit_price: menuItem.price,
+          note: note ? String(note).slice(0, 255) : null,
+        },
+        include: {
+          menu_item: { select: { item_name: true, item_name_km: true, price: true } },
+          order: { select: { order_id: true, table: { select: { table_number: true } } } },
+        },
+      });
+
+      // Adding new Pending items to a Served order reopens order status so
+      // guest tracking and cashier queues do not leave new items under Served/Ready.
+      const syncedOrder = await syncOrderStatusInTx(tx, parsedOrderId);
+
+      return { order: existingOrder, orderItem: createdItem, updatedOrder: syncedOrder };
     });
 
     const io = getIO();
@@ -166,8 +229,13 @@ export const addItem = async (req, res) => {
       io.to("role:barista").emit("order_item:new", orderItem);
     }
 
+    emitOrderStatusChanged(io, updatedOrder);
+
     res.status(201).json(orderItem);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
     console.error(error);
     res.status(500).json({ message: "Internal Server Error" });
   }
@@ -183,43 +251,45 @@ export const updateItemStatus = async (req, res) => {
       .json({ message: `Status must be one of: ${validStatuses.join(", ")}` });
   }
 
+  const itemId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(itemId) || itemId < 1) {
+    return res.status(404).json({ message: "Order item not found" });
+  }
+
   try {
-    const orderItem = await prisma.orderItem.update({
-      where: { order_item_id: parseInt(req.params.id) },
-      data: { status },
-      include: {
-        menu_item: { select: { item_name: true, item_name_km: true, category: { select: { type: true } } } },
-      },
+    const existing = await prisma.orderItem.findUnique({
+      where: { order_item_id: itemId },
+      select: { order_id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ message: "Order item not found" });
+    }
+
+    const { orderItem, updatedOrder } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.order_id})`;
+
+      const updatedItem = await tx.orderItem.update({
+        where: { order_item_id: itemId },
+        data: { status },
+        include: {
+          menu_item: { select: { item_name: true, item_name_km: true, category: { select: { type: true } } } },
+          order: { select: { table_id: true } },
+        },
+      });
+
+      const syncedOrder = await syncOrderStatusInTx(tx, existing.order_id);
+      return { orderItem: updatedItem, updatedOrder: syncedOrder };
     });
 
     const io = getIO();
     const room = orderItem.menu_item?.category?.type === "drink" ? "role:barista" : "role:kitchen";
-    io.to(room).to("role:cashier").emit("order_item:status_changed", orderItem);
-
-    if (status === "Ready") {
-      const allItems = await prisma.orderItem.findMany({
-        where: { order_id: orderItem.order_id },
-        select: { status: true },
-      });
-
-      const allReady = allItems.every((item) => item.status === "Ready");
-
-      if (allReady) {
-        const currentOrder = await prisma.order.findUnique({
-          where: { order_id: orderItem.order_id },
-          select: { status: true, table_id: true },
-        });
-
-        if (currentOrder && currentOrder.status !== "Paid") {
-          const updatedOrder = await prisma.order.update({
-            where: { order_id: orderItem.order_id },
-            data: { status: "Served" },
-          });
-          io.to("role:cashier").to("role:admin").emit("order:status_changed", updatedOrder);
-          io.to(`table:${updatedOrder.table_id}`).emit("order:status_changed", updatedOrder);
-        }
-      }
+    io.to(room).to("role:cashier").to("role:admin").emit("order_item:status_changed", orderItem);
+    if (orderItem.order?.table_id) {
+      io.to(`table:${orderItem.order.table_id}`).emit("order_item:status_changed", orderItem);
     }
+
+    emitOrderStatusChanged(io, updatedOrder);
 
     res.json(orderItem);
   } catch (error) {
@@ -267,27 +337,46 @@ export const updateItemNote = async (req, res) => {
 };
 
 export const deleteItem = async (req, res) => {
+  const itemId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(itemId) || itemId < 1) {
+    return res.status(404).json({ message: "Order item not found" });
+  }
+
   try {
-    const orderItem = await prisma.orderItem.findUnique({
-      where: { order_item_id: parseInt(req.params.id) },
-      include: {
-        menu_item: { select: { category: { select: { type: true } } } },
-        order: { select: { table_id: true } },
-      },
+    const existing = await prisma.orderItem.findUnique({
+      where: { order_item_id: itemId },
+      select: { order_id: true },
     });
 
-    if (!orderItem) {
+    if (!existing) {
       return res.status(404).json({ message: "Order item not found" });
     }
 
-    if (orderItem.status !== "Pending") {
-      return res
-        .status(400)
-        .json({ message: "Cannot remove item that is already being prepared" });
-    }
+    const { orderItem, deleted, updatedOrder } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.order_id})`;
 
-    const deleted = await prisma.orderItem.delete({
-      where: { order_item_id: parseInt(req.params.id) },
+      const currentItem = await tx.orderItem.findUnique({
+        where: { order_item_id: itemId },
+        include: {
+          menu_item: { select: { category: { select: { type: true } } } },
+          order: { select: { table_id: true } },
+        },
+      });
+
+      if (!currentItem) {
+        throw httpError(404, "Order item not found");
+      }
+
+      if (currentItem.status !== "Pending") {
+        throw httpError(400, "Cannot remove item that is already being prepared");
+      }
+
+      const removed = await tx.orderItem.delete({
+        where: { order_item_id: itemId },
+      });
+
+      const syncedOrder = await syncOrderStatusInTx(tx, removed.order_id);
+      return { orderItem: currentItem, deleted: removed, updatedOrder: syncedOrder };
     });
 
     const io = getIO();
@@ -303,31 +392,13 @@ export const deleteItem = async (req, res) => {
       });
     }
 
-    const remainingItems = await prisma.orderItem.findMany({
-      where: { order_id: deleted.order_id },
-      select: { status: true },
-    });
-
-    if (remainingItems.length > 0 && remainingItems.every((item) => item.status === "Ready")) {
-      const currentOrder = await prisma.order.findUnique({
-        where: { order_id: deleted.order_id },
-        select: { status: true, table_id: true },
-      });
-
-      if (currentOrder && currentOrder.status !== "Paid") {
-        const updatedOrder = await prisma.order.update({
-          where: { order_id: deleted.order_id },
-          data: { status: "Served" },
-        });
-        io.to("role:cashier").to("role:admin").emit("order:status_changed", updatedOrder);
-        if (updatedOrder.table_id) {
-          io.to(`table:${updatedOrder.table_id}`).emit("order:status_changed", updatedOrder);
-        }
-      }
-    }
+    emitOrderStatusChanged(io, updatedOrder);
 
     res.status(200).json({ message: "Item successfully removed from order" });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
     console.error(error);
     res.status(500).json({ message: "Internal server error" });
   }

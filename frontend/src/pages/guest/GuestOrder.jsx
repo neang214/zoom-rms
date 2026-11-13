@@ -80,6 +80,7 @@ export default function GuestOrder() {
     if (data?.status) setLiveOrderStatus(data.status)
   })
   useSocketEvent("order:new", () => setLiveOrderStatus("Pending"))
+  useSocketEvent("order:deleted", () => setLiveOrderStatus(null))
 
   useEffect(() => {
     fetchItems()
@@ -193,7 +194,12 @@ export default function GuestOrder() {
 
       setSubmitted(true)
       setSubmitting(false)
-      setLiveOrderStatus("Pending")
+      try {
+        const latest = await getActiveOrderBySession()
+        setLiveOrderStatus(latest?.status || "Pending")
+      } catch {
+        setLiveOrderStatus("Pending")
+      }
       setTimeout(() => {
         submittingRef.current = false
         setSubmitted(false)

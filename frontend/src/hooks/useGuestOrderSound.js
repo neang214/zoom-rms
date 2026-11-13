@@ -14,7 +14,12 @@ export function useGuestOrderSound() {
     
     
     
-    if (data.status !== "Served" && data.status !== "Paid") return
+    if (data.status !== "Served" && data.status !== "Paid") {
+      if (localStorage.getItem(STORAGE_KEY) === `${data.order_id}:Served`) {
+        localStorage.removeItem(STORAGE_KEY)
+      }
+      return
+    }
 
     const lastAlerted = localStorage.getItem(STORAGE_KEY)
     if (lastAlerted === `${data.order_id}:${data.status}`) return
