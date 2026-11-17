@@ -39,7 +39,7 @@ export const getLowStock = async (req, res) => {
       FROM stock s
       JOIN units u ON s.unit_id = u.unit_id
       WHERE s.quantity <= 0
-      OR (s.min_level IS NOT NULL AND s.quantity < s.min_level)
+      OR (s.min_level IS NOT NULL AND s.quantity <= s.min_level)
     `;
         res.json(lowStock);
     } catch (error) {
@@ -49,7 +49,7 @@ export const getLowStock = async (req, res) => {
 };
 
 export const createStock = async (req, res) => {
-    const { item_name, quantity, unit_id, min_level, stock_type } = req.body;
+    const { item_name, unit_id, min_level, stock_type } = req.body;
     const cleanName = String(item_name || "").trim();
     const hasMin = min_level !== undefined && min_level !== null && min_level !== "";
 
@@ -58,17 +58,15 @@ export const createStock = async (req, res) => {
 
     const parsedUnitId = parseInt(unit_id, 10);
     const parsedMin = parseFloat(min_level);
-    const hasQty = quantity !== undefined && quantity !== null && quantity !== "";
-    const parsedQty = hasQty ? parseFloat(quantity) : 0;
 
-    if (!Number.isInteger(parsedUnitId) || parsedUnitId <= 0 || isNaN(parsedMin) || parsedMin < 0 || isNaN(parsedQty) || parsedQty < 0)
-        return res.status(400).json({ message: "Invalid quantity, min level, or unit" });
+    if (!Number.isInteger(parsedUnitId) || parsedUnitId <= 0 || isNaN(parsedMin) || parsedMin < 0)
+        return res.status(400).json({ message: "Invalid min level or unit" });
 
     try {
         const stock = await prisma.stock.create({
             data: {
                 item_name: cleanName,
-                quantity: parsedQty,
+                quantity: 0,
                 unit_id: parsedUnitId,
                 min_level: parsedMin,
                 stock_type: stock_type || "both",
@@ -82,14 +80,13 @@ export const createStock = async (req, res) => {
 };
 
 export const updateStock = async (req, res) => {
-    const { item_name, quantity, unit_id, min_level, stock_type } = req.body;
+    const { item_name, unit_id, min_level, stock_type } = req.body;
     try {
         const stock = await prisma.stock.update({
             where: { stock_id: parseInt(req.params.id) },
             data: {
-                item_name,
-                quantity: quantity != null ? parseFloat(quantity) : undefined,
-                unit_id: unit_id != null ? parseInt(unit_id) : undefined,
+                item_name: item_name != null ? String(item_name).trim() : undefined,
+                unit_id: unit_id != null ? parseInt(unit_id, 10) : undefined,
                 min_level: min_level != null ? parseFloat(min_level) : undefined,
                 stock_type: stock_type || undefined,
             },
@@ -104,23 +101,9 @@ export const updateStock = async (req, res) => {
 };
 
 export const addStockQuantity = async (req, res) => {
-    const quantity = parseFloat(req.body.quantity);
-    if (isNaN(quantity) || quantity <= 0)
-        return res.status(400).json({ message: "Quantity must be a positive number" });
-
-    try {
-        const updatedStock = await prisma.stock.update({
-            where: { stock_id: parseInt(req.params.id) },
-            data: { quantity: { increment: quantity } },
-            include: { unit: true },
-        });
-
-        res.status(200).json(updatedStock);
-    } catch (error) {
-        if (error.code === "P2025")
-            return res.status(404).json({ message: "Stock not found" });
-        res.status(500).json({ message: "Internal Server Error" });
-    }
+    return res.status(400).json({
+        message: "Direct stock addition is disabled. Please create a Purchase Order so restocking is recorded in reports.",
+    });
 };
 
 export const decreaseStockQuantity = async (req, res) => {
@@ -129,29 +112,48 @@ export const decreaseStockQuantity = async (req, res) => {
     if (isNaN(quantity) || quantity <= 0)
         return res.status(400).json({ message: "Invalid quantity" });
 
+    const stockId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(stockId) || stockId <= 0)
+        return res.status(400).json({ message: "Invalid stock ID" });
+
+    const role = req.user?.role || "staff";
+
     try {
-        const stock = await prisma.stock.findUnique({
-            where: { stock_id: parseInt(req.params.id) },
-            include: { unit: true },
-        });
+        const updatedStock = await prisma.$transaction(async (tx) => {
+            const stock = await tx.stock.findUnique({
+                where: { stock_id: stockId },
+                include: { unit: true },
+            });
 
-        if (!stock) return res.status(404).json({ message: "Stock not found" });
+            if (!stock) {
+                const err = new Error("NOT_FOUND");
+                throw err;
+            }
 
-        if (Number(stock.quantity) < quantity)
-            return res
-                .status(400)
-                .json({ message: "Not enough stock available" });
+            if (role === "kitchen" && stock.stock_type === "barista") {
+                const err = new Error("FORBIDDEN_STATION");
+                throw err;
+            }
+            if (role === "barista" && stock.stock_type === "kitchen") {
+                const err = new Error("FORBIDDEN_STATION");
+                throw err;
+            }
 
-        const updatedStock = await prisma.stock.update({
-            where: { stock_id: parseInt(req.params.id) },
-            data: { quantity: { decrement: quantity } },
-            include: { unit: true },
+            if (Number(stock.quantity) < quantity) {
+                const err = new Error("INSUFFICIENT_STOCK");
+                throw err;
+            }
+
+            return tx.stock.update({
+                where: { stock_id: stockId },
+                data: { quantity: { decrement: quantity } },
+                include: { unit: true },
+            });
         });
 
         // 1. Always send a usage log so admin knows what was taken and by whom.
-        const role = req.user?.role || "staff"
         sendTelegramMessage(stockUsedMessage(updatedStock, quantity, role))
-            .catch(err => console.error("Telegram usage log error:", err))
+            .catch(err => console.error("Telegram usage log error:", err));
 
         // 2. Also send a low stock alert if quantity hit or dropped below min_level.
         if (
@@ -159,11 +161,17 @@ export const decreaseStockQuantity = async (req, res) => {
             Number(updatedStock.quantity) <= Number(updatedStock.min_level)
         ) {
             sendTelegramMessage(lowStockMessage(updatedStock))
-                .catch(err => console.error("Telegram low stock error:", err))
+                .catch(err => console.error("Telegram low stock error:", err));
         }
 
         res.json(updatedStock);
     } catch (error) {
+        if (error.message === "NOT_FOUND")
+            return res.status(404).json({ message: "Stock not found" });
+        if (error.message === "FORBIDDEN_STATION")
+            return res.status(403).json({ message: "You cannot deduct stock assigned to another station" });
+        if (error.message === "INSUFFICIENT_STOCK")
+            return res.status(400).json({ message: "Not enough stock available" });
         console.error("decreaseStockQuantity error:", error);
         res.status(500).json({ message: "Internal Server Error" });
     }

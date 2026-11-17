@@ -11,7 +11,7 @@ import { usePageTitle } from "../../hooks/usePageTitle"
 import { SimpleHeader, ConfirmModal } from "@/components/shared"
 import {
   StockStats, StockTable, StockFormDialog, StockViewDialog,
-  AddQtyDialog, AddUnitDialog, StockOrdersCard, StockOrderDialog, stockImageUrl,
+  AddUnitDialog, StockOrdersCard, StockOrderDialog, stockImageUrl,
 } from "@/components/admin/StockParts"
 
 export default function Stock() {
@@ -19,7 +19,7 @@ export default function Stock() {
   usePageTitle(t("stock.title"))
   const {
     stockItems, lowStock, fetchStock, fetchLowStock,
-    createStock, updateStock, increaseStock, deleteStock, uploadStockImage, isLoading,
+    createStock, updateStock, deleteStock, uploadStockImage, isLoading,
   } = useStockStore()
   const { units, fetchUnits, createUnit, updateUnit, deleteUnit } = useUnitStore()
   const { stockOrders, fetchStockOrders, createStockOrder, updateStatus: updatePoStatus, isLoading: poLoading } = useStockOrderStore()
@@ -35,8 +35,6 @@ export default function Stock() {
   const [addOpen, setAddOpen] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [viewItem, setViewItem] = useState(null)
-  const [addQtyItem, setAddQtyItem] = useState(null)
-  const [addQty, setAddQty] = useState("")
   const [addUnitOpen, setAddUnitOpen] = useState(false)
   const [newUnitName, setNewUnitName] = useState("")
   const [form, setForm] = useState({ item_name: "", quantity: "", unit_id: "", min_level: "", stock_type: "both" })
@@ -70,12 +68,12 @@ export default function Stock() {
     const matchesUnit = catFilter === "All categories" || i.unit?.unit_name === catFilter
     const matchesSearch = i.item_name?.toLowerCase().includes(search.toLowerCase())
     const matchesType = typeFilter === "all" || (i.stock_type || "both") === typeFilter
-    const isLow = lowStockIds.has(i.stock_id) || Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) < Number(i.min_level))
+    const isLow = lowStockIds.has(i.stock_id) || Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) <= Number(i.min_level))
     const matchesLow = !lowOnly || isLow
     return matchesUnit && matchesSearch && matchesType && matchesLow
   })
 
-  const lowStockCount = (lowStock || []).length || (stockItems || []).filter(i => Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) < Number(i.min_level))).length
+  const lowStockCount = (lowStock || []).length || (stockItems || []).filter(i => Number(i.quantity) <= 0 || (i.min_level != null && Number(i.quantity) <= Number(i.min_level))).length
   const unitNames = [...new Set((stockItems || []).map(i => i.unit?.unit_name).filter(Boolean))]
   const pendingPoCount = (stockOrders || []).filter(po => po.status !== "Received").length
 
@@ -137,14 +135,13 @@ export default function Stock() {
   }
 
   const handleUpdate = async () => {
-    if (!form.item_name || form.quantity === "" || !form.unit_id || form.min_level === "") {
+    if (!form.item_name?.trim() || !form.unit_id || form.min_level === "") {
       setErrorMsg("All fields are required.")
       return
     }
-    const qty = parseFloat(form.quantity)
     const min = parseFloat(form.min_level)
-    if (isNaN(qty) || qty < 0 || isNaN(min) || min < 0) {
-      setErrorMsg("Quantity and min level must be valid non-negative numbers.")
+    if (isNaN(min) || min < 0) {
+      setErrorMsg("Min level must be a valid non-negative number.")
       return
     }
     setSaving(true)
@@ -152,7 +149,6 @@ export default function Stock() {
     try {
       await updateStock(editItem.stock_id, {
         item_name: form.item_name.trim(),
-        quantity: qty,
         unit_id: parseInt(form.unit_id),
         min_level: min,
         stock_type: form.stock_type,
@@ -194,26 +190,6 @@ export default function Stock() {
     }
   }
 
-  const handleAddQty = async () => {
-    const amount = parseFloat(addQty)
-    if (!addQty || isNaN(amount) || amount <= 0) {
-      setErrorMsg("Please enter a valid positive quantity.")
-      return
-    }
-    setSaving(true)
-    setErrorMsg("")
-    try {
-      await increaseStock(addQtyItem.stock_id, amount)
-      await fetchLowStock()
-      setAddQtyItem(null)
-      setAddQty("")
-    } catch (err) {
-      setErrorMsg(err?.response?.data?.message || "Failed to add quantity.")
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const handleAddUnit = async () => {
     if (!newUnitName.trim()) return
     setSaving(true)
@@ -246,9 +222,9 @@ export default function Stock() {
   }
 
   // Purchase Order handlers
-  const openNewPo = () => {
+  const openNewPo = (preselectedStockId) => {
     setPoForm({
-      stock_id: stockItems[0]?.stock_id || "",
+      stock_id: preselectedStockId || stockItems[0]?.stock_id || "",
       supplier_id: suppliers[0]?.supplier_id || "",
       quantity: "",
       invoice: "",
@@ -299,17 +275,17 @@ export default function Stock() {
       <SimpleHeader
         title={t("stock.title")}
         subtitle={t("stock.subtitle")}
-        action={
-          activeTab === "inventory" ? (
-            <Button onClick={openAdd} className="gap-2">
-              <Plus size={15} /> {t("stock.addItem")}
-            </Button>
-          ) : (
-            <Button onClick={openNewPo} className="gap-2">
-              <Plus size={15} /> {t("stock.newPo")}
-            </Button>
-          )
-        }
+          action={
+            activeTab === "inventory" ? (
+              <Button onClick={openAdd} className="gap-2">
+                <Plus size={15} /> {t("stock.addItem")}
+              </Button>
+            ) : (
+              <Button onClick={() => openNewPo()} className="gap-2">
+                <Plus size={15} /> {t("stock.newPo")}
+              </Button>
+            )
+          }
       />
 
       <StockStats
@@ -387,7 +363,7 @@ export default function Stock() {
           lowStockCount={lowStockCount}
           unitNames={unitNames}
           onAddUnit={() => { setErrorMsg(""); setAddUnitOpen(true) }}
-          onAddQty={(item) => { setErrorMsg(""); setAddQty(""); setAddQtyItem(item) }}
+          onAddQty={(item) => openNewPo(item.stock_id)}
           onView={setViewItem}
           onEdit={openEdit}
           onDelete={requestDelete}
@@ -396,7 +372,7 @@ export default function Stock() {
         <StockOrdersCard
           stockOrders={stockOrders}
           isLoading={poLoading}
-          onNewOrder={openNewPo}
+          onNewOrder={() => openNewPo()}
           onUpdateStatus={handleUpdatePoStatus}
           updatingId={updatingPoId}
         />
@@ -431,9 +407,6 @@ export default function Stock() {
       />
 
       <StockViewDialog item={viewItem} onClose={() => setViewItem(null)} />
-
-      <AddQtyDialog item={addQtyItem} addQty={addQty} setAddQty={setAddQty}
-        errorMsg={errorMsg} saving={saving} onConfirm={handleAddQty} onClose={() => setAddQtyItem(null)} />
 
       <AddUnitDialog
         open={addUnitOpen}

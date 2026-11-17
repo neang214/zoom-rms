@@ -9,12 +9,12 @@ export default defineConfig({
     plugins: [react(), tailwindcss()],
     resolve: {
         alias: {
-            "@": path.resolve(__dirname, "./src"),
+            "@": path.resolve(import.meta.dirname, "./src"),
         },
     },
     server: {
         port: 3000,
-        strictPort: true, // Optional: fails instead of auto-switching if port 3000 is busy
+        strictPort: false, // Auto-switch to next available port if port 3000 is busy
         host: true, // listen on the network, not just localhost — needed to
         // reach the dev server from a phone on the same WiFi
         allowedHosts: [

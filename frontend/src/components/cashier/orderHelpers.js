@@ -229,7 +229,7 @@ function printThermalReceiptHtml(title, bodyHtml) {
 }
 
 // Prints full A4 document inside a hidden iframe (for Admin)
-function printA4DocumentHtml(title, bodyHtml) {
+export function printA4DocumentHtml(title, bodyHtml) {
   const existing = document.getElementById("zoom-a4-print-iframe")
   if (existing) existing.remove()
 
@@ -770,28 +770,6 @@ export function printExecutiveReport({
     0
   )
 
-  const methodMap = new Map()
-  for (const o of paidOrders) {
-    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
-    const prev = methodMap.get(mName) || { count: 0, total: 0 }
-    prev.count += 1
-    prev.total += orderTotal(o)
-    methodMap.set(mName, prev)
-  }
-
-  const methodsRows = Array.from(methodMap.entries())
-    .map(
-      ([name, info]) => `
-      <tr>
-        <td><strong>${escapeHtml(name)}</strong></td>
-        <td class="center">${info.count}</td>
-        <td class="right"><strong>$${info.total.toFixed(2)}</strong></td>
-        <td class="right">៛${Math.round(info.total * KHR_RATE).toLocaleString()}</td>
-      </tr>
-    `
-    )
-    .join("")
-
   const orderRowsHtml = periodOrders
     .map((o) => {
       const t = orderTotal(o)
@@ -847,22 +825,6 @@ export function printExecutiveReport({
         <div class="kpi-sub">Across paid orders</div>
       </div>
     </div>
-
-    ${methodsRows
-      ? `<h3>Revenue by Payment Method</h3>
-           <table>
-             <thead>
-               <tr>
-                 <th>Payment Method</th>
-                 <th class="center">Orders</th>
-                 <th class="right">Amount (USD)</th>
-                 <th class="right">Amount (KHR)</th>
-               </tr>
-             </thead>
-             <tbody>${methodsRows}</tbody>
-           </table>`
-      : ""
-    }
 
     <h3>Order Transactions (${periodOrders.length})</h3>
     <table>

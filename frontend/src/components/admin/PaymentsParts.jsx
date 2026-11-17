@@ -1,12 +1,12 @@
 import { useState, useMemo } from "react"
 import {
   ShoppingCart, TrendingUp, Receipt, Printer, DollarSign, Calendar, Download,
-  CreditCard, Flame, CheckCircle2, Search, ArrowRight, BarChart3, Eye, FileSpreadsheet,
+  CreditCard, CheckCircle2, Search, ArrowRight, BarChart3, Eye, FileSpreadsheet,
 } from "lucide-react"
 import {
   Button, Card, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Badge, Input,
 } from "@/components/ui"
-import { cn, menuItemName } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 import { printExecutiveReport, printThermalReport, printOrderReceipt } from "@/components/cashier/orderHelpers"
 import ViewOrderDialog from "@/components/cashier/ViewOrderDialog"
 import { useLang } from "@/i18n/LanguageContext"
@@ -662,7 +662,7 @@ export function ReportBuilder({
   periods: periodsProp,
   printFormat = "a4",
 }) {
-  const { t, lang } = useLang()
+  const { t } = useLang()
   const periodOptions = periodsProp || periods
   const periodLabelKey = {
     Daily: "reports.daily",
@@ -703,34 +703,6 @@ export function ReportBuilder({
     () => paidOrders.reduce((sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0), 0),
     [paidOrders]
   )
-
-  const methodBreakdown = useMemo(() => {
-    const map = new Map()
-    for (const o of paidOrders) {
-      const name = o.payments?.[0]?.method?.method_name || "Cash / Other"
-      const prev = map.get(name) || { name, count: 0, total: 0 }
-      prev.count += 1
-      prev.total += orderTotal(o)
-      map.set(name, prev)
-    }
-    return Array.from(map.values()).sort((a, b) => b.total - a.total)
-  }, [paidOrders])
-
-  const topItemsInPeriod = useMemo(() => {
-    const map = new Map()
-    for (const o of paidOrders) {
-      for (const oi of o.order_items || []) {
-        const key = oi.menu_item_id || oi.menu_item?.item_name || `item-${oi.order_item_id}`
-        const name = oi.menu_item ? menuItemName(oi.menu_item, lang) : `Item #${oi.menu_item_id}`
-        const prev = map.get(key) || { name, qty: 0, revenue: 0 }
-        prev.name = name
-        prev.qty += Number(oi.quantity || 0)
-        prev.revenue += Number(oi.unit_price || 0) * Number(oi.quantity || 0)
-        map.set(key, prev)
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => b.qty - a.qty).slice(0, 5)
-  }, [paidOrders, lang])
 
   const visibleOrders = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -874,89 +846,6 @@ export function ReportBuilder({
             <div className="text-xs text-[var(--color-muted)] mt-0.5">{sub}</div>
           </Card>
         ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <CreditCard size={16} className="text-[var(--color-primary)]" />
-            <div>
-              <div className="font-semibold text-sm text-[var(--color-text)]">{t("reports.revenueByMethod")}</div>
-              <div className="text-xs text-[var(--color-muted)]">{t("reports.distributionCompleted")}</div>
-            </div>
-          </div>
-
-          {methodBreakdown.length === 0 ? (
-            <div className="text-center py-8 text-xs text-[var(--color-muted)]">{t("reports.noPaidOrdersPeriod")}</div>
-          ) : (
-            <div className="space-y-3">
-              {methodBreakdown.map((m) => {
-                const pct = totalRevenue > 0 ? Math.round((m.total / totalRevenue) * 100) : 0
-                return (
-                  <div key={m.name} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-[var(--color-text)]">
-                        {m.name}{" "}
-                        <span className="text-[var(--color-muted)] font-normal">
-                          ({m.count} {t("cashier.orders")})
-                        </span>
-                      </span>
-                      <span className="font-bold text-[var(--color-primary)]">
-                        ${m.total.toFixed(2)} <span className="text-[var(--color-muted)] font-normal">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[var(--color-primary-muted)] overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300"
-                        style={{ width: `${Math.max(pct, 4)}%` }}
-                      />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Flame size={16} className="text-[var(--color-flame)]" />
-            <div>
-              <div className="font-semibold text-sm text-[var(--color-text)]">{t("reports.topItemsPeriod")}</div>
-              <div className="text-xs text-[var(--color-muted)]">
-                {t("reports.mostOrderedPeriod")} {range.label}
-              </div>
-            </div>
-          </div>
-
-          {topItemsInPeriod.length === 0 ? (
-            <div className="text-center py-8 text-xs text-[var(--color-muted)]">{t("reports.noItemSales")}</div>
-          ) : (
-            <div className="space-y-2.5">
-              {topItemsInPeriod.map((item, idx) => (
-                <div
-                  key={item.name}
-                  className="flex items-center justify-between py-1.5 border-b border-[var(--color-border)]/60 last:border-0 text-xs"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-5 h-5 rounded-md bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-bold flex items-center justify-center shrink-0">
-                      {idx + 1}
-                    </span>
-                    <span className="font-medium text-[var(--color-text)] truncate">{item.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <Badge variant="secondary">
-                      {item.qty} {t("dashboard.sold")}
-                    </Badge>
-                    <span className="font-semibold text-[var(--color-text)] w-16 text-right">
-                      ${item.revenue.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
       </div>
 
       <Card>

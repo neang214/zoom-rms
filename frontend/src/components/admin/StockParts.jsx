@@ -12,7 +12,7 @@ import { useLang } from "@/i18n/LanguageContext"
 export function stockStatus(item) {
   if (Number(item?.quantity) <= 0) return "OutOfStock"
   if (item?.min_level == null) return "InStock"
-  return Number(item.quantity) < Number(item.min_level) ? "LowStock" : "InStock"
+  return Number(item.quantity) <= Number(item.min_level) ? "LowStock" : "InStock"
 }
 
 function stockStatusLabel(item, t) {
@@ -173,7 +173,7 @@ export function StockStats({ stockItems, lowStockCount, unitNames, stockOrdersCo
   )
 }
 
-export function StockFormFields({ form, setForm, units, imagePreview, onImageSelect, onImageClear, isEdit = false }) {
+export function StockFormFields({ form, setForm, units, imagePreview, onImageSelect, onImageClear }) {
   const { t } = useLang()
   return (
     <div className="space-y-4">
@@ -185,16 +185,9 @@ export function StockFormFields({ form, setForm, units, imagePreview, onImageSel
         <Label>{t("stock.itemName")}</Label>
         <Input value={form.item_name} onChange={e => setForm(p => ({ ...p, item_name: e.target.value }))} />
       </div>
-      {isEdit ? (
-        <div className="space-y-1.5">
-          <Label>{t("stock.quantity")}</Label>
-          <Input type="number" min="0" step="0.01" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
-        </div>
-      ) : (
-        <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-primary-muted)]/50 border border-[var(--color-primary)]/20 rounded-xl px-3 py-2">
-          {t("stock.startsAtZeroHint")}
-        </div>
-      )}
+      <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-primary-muted)]/50 border border-[var(--color-primary)]/20 rounded-xl px-3 py-2">
+        {t("stock.startsAtZeroHint")}
+      </div>
       <div className="space-y-1.5">
         <Label>{t("stock.unit")}</Label>
         <Select value={form.unit_id ? String(form.unit_id) : ""} onValueChange={v => setForm(p => ({ ...p, unit_id: parseInt(v) }))}>
@@ -310,13 +303,13 @@ export function StockTable({
                   <TableCell><StockTypeBadge type={item.stock_type} /></TableCell>
                   <TableCell className="text-[var(--color-muted)]">{item.min_level != null ? `${Number(item.min_level)} ${item.unit?.unit_name}` : "—"}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{item.unit?.unit_name}</TableCell>
-                  <TableCell className="text-[var(--color-muted)]">{item.last_updated ? new Date(item.last_updated).toLocaleDateString("en-GB") : "—"}</TableCell>
+                  <TableCell className="text-[var(--color-muted)] text-xs">{item.last_updated ? new Date(item.last_updated).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" }) : "—"}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => onAddQty(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors" title={t("stock.addQuantity")}><Plus size={14} /></button>
-                      <button onClick={() => onView(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-info-muted)] text-[var(--color-muted)] hover:text-[var(--color-info)] transition-colors"><Eye size={14} /></button>
-                      <button onClick={() => onEdit(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors"><Pencil size={14} /></button>
-                      <button onClick={() => onDelete(item.stock_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors"><Trash2 size={14} /></button>
+                      <button onClick={() => onAddQty(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer" title={t("stock.newPo")}><Plus size={14} /></button>
+                      <button onClick={() => onView(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-info-muted)] text-[var(--color-muted)] hover:text-[var(--color-info)] transition-colors cursor-pointer"><Eye size={14} /></button>
+                      <button onClick={() => onEdit(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors cursor-pointer"><Pencil size={14} /></button>
+                      <button onClick={() => onDelete(item.stock_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"><Trash2 size={14} /></button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -369,19 +362,25 @@ export function StockOrdersCard({ stockOrders = [], isLoading, onNewOrder, onUpd
                 <TableHead>{t("stock.supplier")}</TableHead>
                 <TableHead>{t("stock.quantity")}</TableHead>
                 <TableHead>{t("stock.placedBy")}</TableHead>
+                <TableHead>{t("payments.dateTime")}</TableHead>
                 <TableHead>{t("stock.status")}</TableHead>
                 <TableHead>{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stockOrders.map(po => (
+              {stockOrders.map(po => {
+                const poDate = po.created_at || po.received_at || po.stock?.last_updated
+                return (
                 <TableRow key={po.stock_order_id}>
                   <TableCell className="font-semibold">PO-{String(po.stock_order_id).padStart(3, "0")}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{po.invoice || "—"}</TableCell>
                   <TableCell className="font-medium">{po.stock?.item_name || `#${po.stock_id}`}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{po.supplier?.supplier_name || `#${po.supplier_id}`}</TableCell>
-                  <TableCell className="font-semibold">{Number(po.quantity)}</TableCell>
+                  <TableCell className="font-semibold">{Number(po.quantity)} {po.stock?.unit?.unit_name || ""}</TableCell>
                   <TableCell className="text-[var(--color-muted)]">{po.user?.username || "—"}</TableCell>
+                  <TableCell className="text-[var(--color-muted)] text-xs">
+                    {poDate ? new Date(poDate).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={statusBadge[po.status] || "outline"}>{po.status}</Badge>
                   </TableCell>
@@ -412,10 +411,10 @@ export function StockOrdersCard({ stockOrders = [], isLoading, onNewOrder, onUpd
                     )}
                   </TableCell>
                 </TableRow>
-              ))}
+              )})}
               {stockOrders.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-[var(--color-muted)] py-8">
+                  <TableCell colSpan={9} className="text-center text-sm text-[var(--color-muted)] py-8">
                     {t("stock.noPos")}
                   </TableCell>
                 </TableRow>

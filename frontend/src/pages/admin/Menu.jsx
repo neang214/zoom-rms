@@ -6,7 +6,7 @@ import { useMenuCategoryStore } from "../../context/menuCategoryContext"
 import api from "../../services/axios"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import {
-  MenuCategoryBar, MenuGrid, MenuFormDialog, AddCategoryDialog, MenuItemSalesDialog,
+  MenuCategoryBar, MenuGrid, MenuFormDialog, AddCategoryDialog,
 } from "@/components/admin/MenuParts"
 import { ConfirmModal } from "@/components/shared"
 import { useLang } from "@/i18n/LanguageContext"
@@ -59,7 +59,7 @@ export default function Menu() {
   const { t, lang } = useLang()
   usePageTitle(t("nav.menu"))
   const {
-    items, archivedItems, fetchItems, fetchArchivedItems, fetchItemSales,
+    items, archivedItems, fetchItems, fetchArchivedItems,
     createItem, updateItem, toggleItem, deleteItem, restoreItem,
     isLoading, archivedLoading,
   } = useMenuItemStore()
@@ -71,7 +71,6 @@ export default function Menu() {
   const [restoringId, setRestoringId] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [editItem, setEditItem] = useState(null)
-  const [salesItem, setSalesItem] = useState(null)
   const [addCatOpen, setAddCatOpen] = useState(false)
   const [newCatName, setNewCatName] = useState("")
   const [newCatType, setNewCatType] = useState("food")
@@ -339,7 +338,6 @@ export default function Menu() {
         categoryName={categoryName}
         onEdit={openEdit}
         onDelete={requestDeleteItem}
-        onViewSales={setSalesItem}
         archivedMode={activeTab === "archived"}
         onRestore={handleRestoreItem}
         restoringId={restoringId}
@@ -368,14 +366,6 @@ export default function Menu() {
         newCatType={newCatType} setNewCatType={setNewCatType}
         errorMsg={errorMsg} saving={saving} onSubmit={handleAddCategory}
         categories={categories} onDeleteCategory={handleDeleteCategory}
-      />
-
-      <MenuItemSalesDialog
-        key={salesItem?.menu_item_id || "none"}
-        item={salesItem}
-        categoryName={categoryName}
-        onClose={() => setSalesItem(null)}
-        fetchItemSales={fetchItemSales}
       />
 
       <ConfirmModal

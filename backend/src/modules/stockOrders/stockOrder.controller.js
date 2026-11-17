@@ -4,7 +4,7 @@ export const getAllPurchaseOrders = async (req, res) => {
     try {
         const purchaseOrders = await prisma.stockOrder.findMany({
             include: {
-                stock: { select: { item_name: true } },
+                stock: { select: { item_name: true, last_updated: true, unit: { select: { unit_name: true } } } },
                 supplier: { select: { supplier_name: true } },
                 user: { select: { username: true } },
             },
@@ -20,6 +20,11 @@ export const getPurchaseOrder = async (req, res) => {
     try {
         const purchaseOrder = await prisma.stockOrder.findUnique({
             where: { stock_order_id: parseInt(req.params.id) },
+            include: {
+                stock: { select: { item_name: true, last_updated: true, unit: { select: { unit_name: true } } } },
+                supplier: { select: { supplier_name: true } },
+                user: { select: { username: true } },
+            },
         });
         if (!purchaseOrder)
             return res
@@ -58,19 +63,26 @@ export const createPurchase = async (req, res) => {
             return res.status(400).json({ message: "Supplier not found or archived" });
         }
 
-        const purchaseOrder = await prisma.stockOrder.create({
-            data: {
-                invoice,
-                quantity: parsedQuantity,
-                user_id,
-                stock_id: parsedStockId,
-                supplier_id: parsedSupplierId,
-            },
-            include: {
-                stock: { select: { item_name: true } },
-                supplier: { select: { supplier_name: true } },
-                user: { select: { username: true } },
-            },
+        const purchaseOrder = await prisma.$transaction(async (tx) => {
+            await tx.stock.update({
+                where: { stock_id: parsedStockId },
+                data: { last_updated: new Date() },
+            });
+
+            return tx.stockOrder.create({
+                data: {
+                    invoice,
+                    quantity: parsedQuantity,
+                    user_id,
+                    stock_id: parsedStockId,
+                    supplier_id: parsedSupplierId,
+                },
+                include: {
+                    stock: { select: { item_name: true, last_updated: true, unit: { select: { unit_name: true } } } },
+                    supplier: { select: { supplier_name: true } },
+                    user: { select: { username: true } },
+                },
+            });
         });
         res.status(201).json(purchaseOrder);
     } catch {
@@ -98,12 +110,23 @@ export const updateStatus = async (req, res) => {
                 throw new Error("NOT_FOUND");
             }
 
-            
-            
+            if (order.status === "Received") {
+                throw new Error("ALREADY_RECEIVED");
+            }
+
+            if (order.status === "Ordered" && status === "Pending") {
+                throw new Error("INVALID_TRANSITION");
+            }
+
             if (status === "Received" && order.status !== "Received") {
                 await tx.stock.update({
                     where: { stock_id: order.stock_id },
                     data: { quantity: { increment: order.quantity } },
+                });
+            } else {
+                await tx.stock.update({
+                    where: { stock_id: order.stock_id },
+                    data: { last_updated: new Date() },
                 });
             }
 
@@ -119,6 +142,16 @@ export const updateStatus = async (req, res) => {
             return res
                 .status(404)
                 .json({ message: "Purchase order not found" });
+        }
+        if (error.message === "ALREADY_RECEIVED") {
+            return res
+                .status(400)
+                .json({ message: "Received purchase orders cannot be modified" });
+        }
+        if (error.message === "INVALID_TRANSITION") {
+            return res
+                .status(400)
+                .json({ message: "Cannot revert an ordered purchase order back to Pending" });
         }
         res.status(500).json({ message: "Internal server error" });
     }
