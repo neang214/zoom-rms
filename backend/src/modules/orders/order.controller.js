@@ -363,50 +363,75 @@ export const updateOrderStatus = async (req, res) => {
 };
 
 export const deleteOrder = async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(orderId) || orderId < 1) {
+    return res.status(400).json({ message: "Invalid order ID" });
+  }
+
   try {
     const order = await prisma.order.findUnique({
-      where: { order_id: parseInt(req.params.id) },
-      include: { order_items: { select: { status: true } } },
+      where: { order_id: orderId },
+      include: {
+        payments: { select: { status: true } },
+      },
     });
 
     if (!order)
       return res.status(404).json({ message: "Order not found" });
 
-    if (
-      order.status !== "Pending" ||
-      order.order_items.some((item) => item.status !== "Pending")
-    ) {
+    const isPaid =
+      order.status === "Paid" ||
+      order.payments.some((p) => p.status === "Completed");
+
+    if (isPaid) {
       return res.status(400).json({
-        message: "Cannot cancel order that is already being prepared",
+        message: "Cannot delete an order that has already been paid",
       });
     }
 
-    await prisma.$transaction(async (tx) => {
+    const tableFreed = await prisma.$transaction(async (tx) => {
+      await tx.payment.deleteMany({
+        where: { order_id: orderId, status: { not: "Completed" } },
+      });
+
       await tx.orderItem.deleteMany({
-        where: { order_id: parseInt(req.params.id) },
+        where: { order_id: orderId },
       });
 
       await tx.order.delete({
-        where: { order_id: parseInt(req.params.id) },
+        where: { order_id: orderId },
       });
 
-      await tx.table.update({
-        where: { table_id: order.table_id },
-        data:  { is_available: true },
+      const otherActive = await tx.order.count({
+        where: {
+          table_id: order.table_id,
+          status: { not: "Paid" },
+        },
       });
+
+      if (otherActive === 0) {
+        await tx.table.update({
+          where: { table_id: order.table_id },
+          data: { is_available: true },
+        });
+        return true;
+      }
+      return false;
     });
 
     const io = getIO();
     io.to("role:cashier").to("role:kitchen").to("role:barista").to("role:admin")
       .emit("order:deleted", { order_id: order.order_id, table_id: order.table_id });
     io.to(`table:${order.table_id}`).emit("order:deleted", { order_id: order.order_id });
-    
-    io.to("role:admin").to("role:cashier").emit("table:updated", {
-      table_id: order.table_id,
-      is_available: true,
-    });
 
-    res.json({ message: "Order cancelled" });
+    if (tableFreed) {
+      io.to("role:admin").to("role:cashier").emit("table:updated", {
+        table_id: order.table_id,
+        is_available: true,
+      });
+    }
+
+    res.json({ message: "Order deleted" });
   } catch (error) {
     console.log(error);
     res.status(500).json({ message: "Internal Server Error" });

@@ -1,4 +1,5 @@
 import prisma from "../../utils/db.js";
+import { encodeInvoiceWithTimestamp, serializeStockOrder } from "../stock/stock.controller.js";
 
 export const getAllPurchaseOrders = async (req, res) => {
     try {
@@ -10,7 +11,7 @@ export const getAllPurchaseOrders = async (req, res) => {
             },
             orderBy: { stock_order_id: "desc" },
         });
-        res.status(200).json(purchaseOrders);
+        res.status(200).json(purchaseOrders.map(serializeStockOrder));
     } catch {
         res.status(500).json({ message: "Internal server error" });
     }
@@ -30,7 +31,7 @@ export const getPurchaseOrder = async (req, res) => {
             return res
                 .status(404)
                 .json({ message: "Purchase order not found" });
-        res.json(purchaseOrder);
+        res.json(serializeStockOrder(purchaseOrder));
     } catch {
         res.status(500).json({ message: "Internal Server Error" });
     }
@@ -71,7 +72,7 @@ export const createPurchase = async (req, res) => {
 
             return tx.stockOrder.create({
                 data: {
-                    invoice,
+                    invoice: encodeInvoiceWithTimestamp(invoice || "NONE"),
                     quantity: parsedQuantity,
                     user_id,
                     stock_id: parsedStockId,
@@ -84,7 +85,7 @@ export const createPurchase = async (req, res) => {
                 },
             });
         });
-        res.status(201).json(purchaseOrder);
+        res.status(201).json(serializeStockOrder(purchaseOrder));
     } catch {
         res.status(500).json({ message: "Internal server error" });
     }

@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react"
 import { ShoppingBag, Search, QrCode } from "lucide-react"
-import { cn, menuItemMatchesSearch } from "@/lib/utils"
+import { cn, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
 import { useOrderStore } from "../../context/orderContext"
 import { usePaymentStore } from "../../context/paymentContext"
 import { useSocketRole, useSocketEvent } from "../../services/socket"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import { useLang } from "@/i18n/LanguageContext"
-import { PageHeader, StatsBar } from "@/components/shared"
+import { PageHeader, StatsBar, ConfirmModal } from "@/components/shared"
 import ReceiptScanner from "@/components/cashier/ReceiptScanner"
 import { orderTotal } from "@/components/cashier/orderHelpers"
 import ActiveOrdersTable from "@/components/cashier/ActiveOrdersTable"
@@ -14,13 +14,16 @@ import ViewOrderDialog from "@/components/cashier/ViewOrderDialog"
 import PaymentDialog from "@/components/cashier/PaymentDialog"
 
 export default function CashierOrders() {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   usePageTitle("Order Management")
-  const { orders, fetchOrders, isLoading } = useOrderStore()
+  const { orders, fetchOrders, deleteOrder, deleteOrderItem, isLoading } = useOrderStore()
   const { paymentMethods, fetchPaymentMethods } = usePaymentStore()
 
   const [payOrder, setPayOrder] = useState(null)
   const [viewOrder, setViewOrder] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null) // { type: "order" | "item", order, item? }
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const [search, setSearch] = useState("")
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scanError, setScanError] = useState("")
@@ -41,9 +44,48 @@ export default function CashierOrders() {
   useSocketEvent("order:deleted", () => fetchOrders())
   useSocketEvent("order_item:new", () => fetchOrders())
   useSocketEvent("order_item:status_changed", () => fetchOrders())
+  useSocketEvent("order_item:deleted", () => fetchOrders())
   useSocketEvent("payment:completed", () => fetchOrders())
 
   const activeOrders = orders.filter(o => !(o.is_paid ?? o.status === "Paid"))
+  const activeViewOrder = viewOrder
+    ? orders.find(o => o.order_id === viewOrder.order_id) || null
+    : null
+
+  const requestDeleteOrder = (order) => {
+    setDeleteError("")
+    setDeleteTarget({ type: "order", order })
+  }
+
+  const requestDeleteItem = (order, item) => {
+    setDeleteError("")
+    setDeleteTarget({ type: "item", order, item })
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      if (deleteTarget.type === "order") {
+        await deleteOrder(deleteTarget.order.order_id)
+        if (viewOrder?.order_id === deleteTarget.order.order_id) {
+          setViewOrder(null)
+        }
+      } else {
+        const res = await deleteOrderItem(deleteTarget.item.order_item_id)
+        if (res?.orderDeleted && viewOrder?.order_id === deleteTarget.order.order_id) {
+          setViewOrder(null)
+        }
+      }
+      await fetchOrders()
+      setDeleteTarget(null)
+    } catch (err) {
+      setDeleteError(err?.response?.data?.message || t("common.failed"))
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const handleReceiptFound = (orderId) => {
     setScannerOpen(false)
@@ -189,13 +231,45 @@ export default function CashierOrders() {
                   <div className="text-[10px] text-[var(--color-muted)]">{sub}</div>
                 </div>
               </div>
-              <ActiveOrdersTable orders={grouped[key]} onPay={setPayOrder} onView={setViewOrder} />
+              <ActiveOrdersTable
+                orders={grouped[key]}
+                onPay={setPayOrder}
+                onView={setViewOrder}
+                onDelete={requestDeleteOrder}
+              />
             </div>
           )
         ))
       )}
 
-      <ViewOrderDialog order={viewOrder} onClose={() => setViewOrder(null)} />
+      <ViewOrderDialog
+        order={activeViewOrder}
+        onClose={() => setViewOrder(null)}
+        onDeleteItem={requestDeleteItem}
+      />
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        busy={deleting}
+        danger
+        title={
+          deleteTarget?.type === "order"
+            ? `Delete Order #${String(deleteTarget.order.order_id).padStart(4, "0")}?`
+            : "Remove Order Item?"
+        }
+        message={
+          deleteTarget?.type === "order"
+            ? `Delete unpaid Order #${String(deleteTarget.order.order_id).padStart(4, "0")} (Table ${deleteTarget.order.table?.table_number || "—"})? This cannot be undone.`
+            : deleteTarget?.item
+              ? `Remove ${menuItemName(deleteTarget.item.menu_item, lang)} (x${deleteTarget.item.quantity}) from Order #${String(deleteTarget.order.order_id).padStart(4, "0")}?`
+              : ""
+        }
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        errorMsg={deleteError}
+      />
 
       <PaymentDialog
         order={payOrder}

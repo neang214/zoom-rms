@@ -1,15 +1,16 @@
-import { Eye, Printer, CreditCard, Users, AlertTriangle } from "lucide-react"
+import { Eye, Printer, CreditCard, Users, AlertTriangle, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isAllergyNote } from "@/lib/noteTags"
 import { orderTotal, statusConfig, printOrderReceipt } from "./orderHelpers"
 import { useLang } from "@/i18n/LanguageContext"
 
-function OrderRow({ order, onPay, onView }) {
+function OrderRow({ order, onPay, onView, onDelete }) {
   const { t } = useLang()
   const cfg = statusConfig[order.status] || statusConfig.Pending
   const total = orderTotal(order)
   const itemCount = order.order_items?.reduce((s, oi) => s + oi.quantity, 0) || 0
   const hasAllergy = order.order_items?.some(oi => isAllergyNote(oi.note))
+  const isPaid = order.is_paid ?? order.status === "Paid"
   return (
     <tr className="border-b border-[var(--color-border)] hover:bg-[var(--color-primary-muted)]/40 transition-colors">
       <td className="py-3 px-3">
@@ -51,13 +52,20 @@ function OrderRow({ order, onPay, onView }) {
             className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors">
             <Eye size={15} />
           </button>
+          {onDelete && !isPaid && (
+            <button onClick={() => onDelete(order)}
+              title={t("common.delete")}
+              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-muted)] hover:border-[var(--color-danger)]/30 transition-colors cursor-pointer">
+              <Trash2 size={15} />
+            </button>
+          )}
         </div>
       </td>
     </tr>
   )
 }
 
-export default function ActiveOrdersTable({ orders, onPay, onView }) {
+export default function ActiveOrdersTable({ orders, onPay, onView, onDelete }) {
   const { t } = useLang()
   return (
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl overflow-hidden">
@@ -74,7 +82,7 @@ export default function ActiveOrdersTable({ orders, onPay, onView }) {
         </thead>
         <tbody>
           {orders.map(order => (
-            <OrderRow key={order.order_id} order={order} onPay={onPay} onView={onView} />
+            <OrderRow key={order.order_id} order={order} onPay={onPay} onView={onView} onDelete={onDelete} />
           ))}
         </tbody>
       </table>

@@ -352,14 +352,21 @@ export const deleteItem = async (req, res) => {
       return res.status(404).json({ message: "Order item not found" });
     }
 
-    const { orderItem, deleted, updatedOrder } = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.order_id})`;
 
       const currentItem = await tx.orderItem.findUnique({
         where: { order_item_id: itemId },
         include: {
           menu_item: { select: { category: { select: { type: true } } } },
-          order: { select: { table_id: true } },
+          order: {
+            select: {
+              order_id: true,
+              table_id: true,
+              status: true,
+              payments: { select: { status: true } },
+            },
+          },
         },
       });
 
@@ -367,19 +374,93 @@ export const deleteItem = async (req, res) => {
         throw httpError(404, "Order item not found");
       }
 
-      if (currentItem.status !== "Pending") {
-        throw httpError(400, "Cannot remove item that is already being prepared");
+      const isPaid =
+        currentItem.order?.status === "Paid" ||
+        currentItem.order?.payments?.some((p) => p.status === "Completed");
+
+      if (isPaid) {
+        throw httpError(400, "Cannot remove item from an order that has already been paid");
       }
 
       const removed = await tx.orderItem.delete({
         where: { order_item_id: itemId },
       });
 
+      const remainingCount = await tx.orderItem.count({
+        where: { order_id: removed.order_id },
+      });
+
+      if (remainingCount === 0) {
+        await tx.payment.deleteMany({
+          where: { order_id: removed.order_id, status: { not: "Completed" } },
+        });
+        await tx.order.delete({
+          where: { order_id: removed.order_id },
+        });
+
+        let tableFreed = false;
+        if (currentItem.order?.table_id) {
+          const otherActive = await tx.order.count({
+            where: {
+              table_id: currentItem.order.table_id,
+              status: { not: "Paid" },
+            },
+          });
+          if (otherActive === 0) {
+            await tx.table.update({
+              where: { table_id: currentItem.order.table_id },
+              data: { is_available: true },
+            });
+            tableFreed = true;
+          }
+        }
+
+        return {
+          orderItem: currentItem,
+          deleted: removed,
+          orderDeleted: true,
+          tableFreed,
+          updatedOrder: null,
+        };
+      }
+
       const syncedOrder = await syncOrderStatusInTx(tx, removed.order_id);
-      return { orderItem: currentItem, deleted: removed, updatedOrder: syncedOrder };
+      return {
+        orderItem: currentItem,
+        deleted: removed,
+        orderDeleted: false,
+        tableFreed: false,
+        updatedOrder: syncedOrder,
+      };
     });
 
+    const { orderItem, deleted, orderDeleted, tableFreed, updatedOrder } = result;
     const io = getIO();
+
+    if (orderDeleted) {
+      io.to("role:cashier").to("role:kitchen").to("role:barista").to("role:admin")
+        .emit("order:deleted", {
+          order_id: deleted.order_id,
+          table_id: orderItem.order?.table_id,
+        });
+      if (orderItem.order?.table_id) {
+        io.to(`table:${orderItem.order.table_id}`).emit("order:deleted", {
+          order_id: deleted.order_id,
+        });
+        if (tableFreed) {
+          io.to("role:admin").to("role:cashier").emit("table:updated", {
+            table_id: orderItem.order.table_id,
+            is_available: true,
+          });
+        }
+      }
+      return res.status(200).json({
+        message: "Last item removed; order deleted",
+        orderDeleted: true,
+        order_id: deleted.order_id,
+      });
+    }
+
     const room = orderItem.menu_item?.category?.type === "drink" ? "role:barista" : "role:kitchen";
     io.to(room).to("role:cashier").to("role:admin").emit("order_item:deleted", {
       order_item_id: deleted.order_item_id,
@@ -394,7 +475,7 @@ export const deleteItem = async (req, res) => {
 
     emitOrderStatusChanged(io, updatedOrder);
 
-    res.status(200).json({ message: "Item successfully removed from order" });
+    res.status(200).json({ message: "Item successfully removed from order", orderDeleted: false });
   } catch (error) {
     if (error.statusCode) {
       return res.status(error.statusCode).json({ message: error.message });

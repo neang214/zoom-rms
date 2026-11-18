@@ -11,7 +11,7 @@ import { usePageTitle } from "../../hooks/usePageTitle"
 import { SimpleHeader, ConfirmModal } from "@/components/shared"
 import {
   StockStats, StockTable, StockFormDialog, StockViewDialog,
-  AddUnitDialog, StockOrdersCard, StockOrderDialog, stockImageUrl,
+  AddQtyDialog, AddUnitDialog, StockOrdersCard, StockOrderDialog, stockImageUrl,
 } from "@/components/admin/StockParts"
 
 export default function Stock() {
@@ -19,7 +19,7 @@ export default function Stock() {
   usePageTitle(t("stock.title"))
   const {
     stockItems, lowStock, fetchStock, fetchLowStock,
-    createStock, updateStock, deleteStock, uploadStockImage, isLoading,
+    createStock, updateStock, increaseStock, deleteStock, uploadStockImage, isLoading,
   } = useStockStore()
   const { units, fetchUnits, createUnit, updateUnit, deleteUnit } = useUnitStore()
   const { stockOrders, fetchStockOrders, createStockOrder, updateStatus: updatePoStatus, isLoading: poLoading } = useStockOrderStore()
@@ -35,6 +35,8 @@ export default function Stock() {
   const [addOpen, setAddOpen] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [viewItem, setViewItem] = useState(null)
+  const [addQtyItem, setAddQtyItem] = useState(null)
+  const [addQty, setAddQty] = useState("")
   const [addUnitOpen, setAddUnitOpen] = useState(false)
   const [newUnitName, setNewUnitName] = useState("")
   const [form, setForm] = useState({ item_name: "", quantity: "", unit_id: "", min_level: "", stock_type: "both" })
@@ -103,13 +105,14 @@ export default function Stock() {
   }
 
   const handleAdd = async () => {
-    if (!form.item_name?.trim() || !form.unit_id || form.min_level === "") {
+    if (!form.item_name?.trim() || form.quantity === "" || !form.unit_id || form.min_level === "") {
       setErrorMsg("All fields are required.")
       return
     }
+    const qty = parseFloat(form.quantity)
     const min = parseFloat(form.min_level)
-    if (isNaN(min) || min < 0) {
-      setErrorMsg("Min level must be a valid non-negative number.")
+    if (isNaN(qty) || qty < 0 || isNaN(min) || min < 0) {
+      setErrorMsg("Quantity and min level must be valid non-negative numbers.")
       return
     }
     setSaving(true)
@@ -117,7 +120,7 @@ export default function Stock() {
     try {
       const created = await createStock({
         item_name: form.item_name.trim(),
-        quantity: 0,
+        quantity: qty,
         unit_id: parseInt(form.unit_id),
         min_level: min,
         stock_type: form.stock_type,
@@ -126,6 +129,7 @@ export default function Stock() {
         await uploadStockImage(created.stock_id, imageFile)
       }
       await fetchLowStock()
+      await fetchStockOrders()
       setAddOpen(false)
     } catch (err) {
       setErrorMsg(err?.response?.data?.message || "Failed to add stock item.")
@@ -135,13 +139,14 @@ export default function Stock() {
   }
 
   const handleUpdate = async () => {
-    if (!form.item_name?.trim() || !form.unit_id || form.min_level === "") {
+    if (!form.item_name?.trim() || form.quantity === "" || !form.unit_id || form.min_level === "") {
       setErrorMsg("All fields are required.")
       return
     }
+    const qty = parseFloat(form.quantity)
     const min = parseFloat(form.min_level)
-    if (isNaN(min) || min < 0) {
-      setErrorMsg("Min level must be a valid non-negative number.")
+    if (isNaN(qty) || qty < 0 || isNaN(min) || min < 0) {
+      setErrorMsg("Quantity and min level must be valid non-negative numbers.")
       return
     }
     setSaving(true)
@@ -149,6 +154,7 @@ export default function Stock() {
     try {
       await updateStock(editItem.stock_id, {
         item_name: form.item_name.trim(),
+        quantity: qty,
         unit_id: parseInt(form.unit_id),
         min_level: min,
         stock_type: form.stock_type,
@@ -157,6 +163,7 @@ export default function Stock() {
         await uploadStockImage(editItem.stock_id, imageFile)
       }
       await fetchLowStock()
+      await fetchStockOrders()
       setEditItem(null)
     } catch (err) {
       setErrorMsg(err?.response?.data?.message || "Failed to update stock item.")
@@ -182,11 +189,33 @@ export default function Stock() {
     try {
       await deleteStock(deleteTarget.stock_id)
       await fetchLowStock()
+      await fetchStockOrders()
       setDeleteTarget(null)
     } catch (err) {
       setDeleteError(deleteErrorMessage(err, t))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleAddQty = async () => {
+    const amount = parseFloat(addQty)
+    if (!addQty || isNaN(amount) || amount <= 0) {
+      setErrorMsg("Please enter a valid positive quantity.")
+      return
+    }
+    setSaving(true)
+    setErrorMsg("")
+    try {
+      await increaseStock(addQtyItem.stock_id, amount)
+      await fetchLowStock()
+      await fetchStockOrders()
+      setAddQtyItem(null)
+      setAddQty("")
+    } catch (err) {
+      setErrorMsg(err?.response?.data?.message || "Failed to add quantity.")
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -363,7 +392,7 @@ export default function Stock() {
           lowStockCount={lowStockCount}
           unitNames={unitNames}
           onAddUnit={() => { setErrorMsg(""); setAddUnitOpen(true) }}
-          onAddQty={(item) => openNewPo(item.stock_id)}
+          onAddQty={(item) => { setErrorMsg(""); setAddQty(""); setAddQtyItem(item) }}
           onView={setViewItem}
           onEdit={openEdit}
           onDelete={requestDelete}
@@ -407,6 +436,16 @@ export default function Stock() {
       />
 
       <StockViewDialog item={viewItem} onClose={() => setViewItem(null)} />
+
+      <AddQtyDialog
+        item={addQtyItem}
+        addQty={addQty}
+        setAddQty={setAddQty}
+        errorMsg={errorMsg}
+        saving={saving}
+        onConfirm={handleAddQty}
+        onClose={() => setAddQtyItem(null)}
+      />
 
       <AddUnitDialog
         open={addUnitOpen}

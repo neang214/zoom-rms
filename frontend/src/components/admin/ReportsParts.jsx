@@ -475,7 +475,26 @@ function printStockA4Report({ items, stockOrders, periodLabel, lowCount, receive
       </div>
     </div>
 
-    <h3>Current Inventory (${items.length})</h3>
+    ${stockOrders.length > 0 ? `
+      <h3>Stock Records &amp; Restocking Log (${stockOrders.length})</h3>
+      <table>
+        <thead>
+          <tr>
+            <th class="center">Record #</th>
+            <th>Ref / Type</th>
+            <th>Stock Item</th>
+            <th>Source / Supplier</th>
+            <th class="right">Quantity Added</th>
+            <th class="center">Recorded By</th>
+            <th class="center">Date &amp; Time</th>
+            <th class="center">Status</th>
+          </tr>
+        </thead>
+        <tbody>${poRowsHtml}</tbody>
+      </table>
+    ` : ""}
+
+    <h3>Current Inventory Balance (${items.length})</h3>
     <table>
       <thead>
         <tr>
@@ -490,25 +509,6 @@ function printStockA4Report({ items, stockOrders, periodLabel, lowCount, receive
       </thead>
       <tbody>${invRowsHtml}</tbody>
     </table>
-
-    ${stockOrders.length > 0 ? `
-      <h3>Purchase Orders Log (${stockOrders.length})</h3>
-      <table>
-        <thead>
-          <tr>
-            <th class="center">PO #</th>
-            <th>Invoice</th>
-            <th>Stock Item</th>
-            <th>Supplier</th>
-            <th class="right">Quantity</th>
-            <th class="center">Placed By</th>
-            <th class="center">Date &amp; Time</th>
-            <th class="center">Status</th>
-          </tr>
-        </thead>
-        <tbody>${poRowsHtml}</tbody>
-      </table>
-    ` : ""}
 
     <div class="footer">
       <div>Prepared by: ___________________________</div>
@@ -1082,7 +1082,7 @@ export function StockReportBuilder({
   const [customFrom, setCustomFrom] = useState(todayStr)
   const [customTo, setCustomTo] = useState(todayStr)
 
-  const [subView, setSubView] = useState("inventory") // "inventory" | "orders"
+  const [subView, setSubView] = useState("orders") // "orders" (Stock Records) | "inventory" (Current Balance)
   const [search, setSearch] = useState("")
   const [stationFilter, setStationFilter] = useState("all")
   const [unitFilter, setUnitFilter] = useState("All")
@@ -1322,19 +1322,6 @@ export function StockReportBuilder({
         <div className="inline-flex items-center gap-1.5 p-1 rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] w-fit">
           <button
             type="button"
-            onClick={() => setSubView("inventory")}
-            className={cn(
-              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer",
-              subView === "inventory"
-                ? "bg-[var(--color-primary)] text-white shadow-xs"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
-            )}
-          >
-            <Package size={14} />
-            <span>{t("stock.inventoryList")} ({filteredStock.length})</span>
-          </button>
-          <button
-            type="button"
             onClick={() => setSubView("orders")}
             className={cn(
               "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer",
@@ -1345,6 +1332,19 @@ export function StockReportBuilder({
           >
             <Truck size={14} />
             <span>{t("stock.poTitle")} ({filteredPos.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubView("inventory")}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer",
+              subView === "inventory"
+                ? "bg-[var(--color-primary)] text-white shadow-xs"
+                : "text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+            )}
+          >
+            <Package size={14} />
+            <span>{t("stock.inventoryList")} ({filteredStock.length})</span>
           </button>
         </div>
 

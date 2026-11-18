@@ -1,12 +1,13 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Button } from "@/components/ui"
-import { Users, AlertTriangle, Printer } from "lucide-react"
+import { Users, AlertTriangle, Printer, Trash2 } from "lucide-react"
 import { cn, menuItemName } from "@/lib/utils"
 import { isAllergyNote } from "@/lib/noteTags"
 import { orderTotal, printOrderReceipt } from "./orderHelpers"
 import { useLang } from "@/i18n/LanguageContext"
 
-export default function ViewOrderDialog({ order, onClose }) {
+export default function ViewOrderDialog({ order, onClose, onDeleteItem }) {
   const { t, lang } = useLang()
+  const isPaid = order ? (order.is_paid ?? order.status === "Paid") : false
   return (
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm">
@@ -31,9 +32,23 @@ export default function ViewOrderDialog({ order, onClose }) {
             <div className="space-y-2">
               {order.order_items?.map(oi => (
                 <div key={oi.order_item_id} className="text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-[var(--color-text)]">{menuItemName(oi.menu_item, lang)} <span className="text-[var(--color-muted)]">x{oi.quantity}</span></span>
-                    <span className="font-medium">${(Number(oi.unit_price) * oi.quantity).toFixed(2)}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[var(--color-text)] min-w-0">
+                      {menuItemName(oi.menu_item, lang)} <span className="text-[var(--color-muted)]">x{oi.quantity}</span>
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">${(Number(oi.unit_price) * oi.quantity).toFixed(2)}</span>
+                      {onDeleteItem && !isPaid && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteItem(order, oi)}
+                          title={t("common.delete")}
+                          className="p-1 rounded-md text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-muted)] transition-colors cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {oi.note && (
                     <div className={cn(

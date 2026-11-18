@@ -185,8 +185,9 @@ export function StockFormFields({ form, setForm, units, imagePreview, onImageSel
         <Label>{t("stock.itemName")}</Label>
         <Input value={form.item_name} onChange={e => setForm(p => ({ ...p, item_name: e.target.value }))} />
       </div>
-      <div className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-primary-muted)]/50 border border-[var(--color-primary)]/20 rounded-xl px-3 py-2">
-        {t("stock.startsAtZeroHint")}
+      <div className="space-y-1.5">
+        <Label>{t("stock.quantity")}</Label>
+        <Input type="number" min="0" step="0.01" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
       </div>
       <div className="space-y-1.5">
         <Label>{t("stock.unit")}</Label>
@@ -306,7 +307,7 @@ export function StockTable({
                   <TableCell className="text-[var(--color-muted)] text-xs">{item.last_updated ? new Date(item.last_updated).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" }) : "—"}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => onAddQty(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer" title={t("stock.newPo")}><Plus size={14} /></button>
+                      <button onClick={() => onAddQty(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer" title={t("stock.addQuantity")}><Plus size={14} /></button>
                       <button onClick={() => onView(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-info-muted)] text-[var(--color-muted)] hover:text-[var(--color-info)] transition-colors cursor-pointer"><Eye size={14} /></button>
                       <button onClick={() => onEdit(item)} className="p-1.5 rounded-lg hover:bg-[var(--color-accent-muted)] text-[var(--color-muted)] hover:text-[var(--color-warning)] transition-colors cursor-pointer"><Pencil size={14} /></button>
                       <button onClick={() => onDelete(item.stock_id)} className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"><Trash2 size={14} /></button>

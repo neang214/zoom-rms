@@ -131,6 +131,29 @@ export const useOrderStore = create((set, get) => ({
         }
     },
 
+    deleteOrderItem: async (itemId) => {
+        try {
+            const res = await api.delete(`/order-items/${itemId}`);
+            if (res.data?.orderDeleted) {
+                set({
+                    orders: get().orders.filter((o) => o.order_id !== res.data.order_id),
+                });
+            } else {
+                set({
+                    orders: get().orders.map((o) => ({
+                        ...o,
+                        order_items: (o.order_items || []).filter(
+                            (oi) => oi.order_item_id !== itemId,
+                        ),
+                    })),
+                });
+            }
+            return res.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+
     fetchOrderHistory: async (dateOrParams, tableId) => {
         try {
             let params = {};

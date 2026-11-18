@@ -1,4 +1,5 @@
 import prisma from "../../utils/db.js";
+import { DIRECT_SUPPLIER_NAME } from "../stock/stock.controller.js";
 
 function parsePositiveId(raw) {
   const id = parseInt(raw, 10);
@@ -8,7 +9,7 @@ function parsePositiveId(raw) {
 export const getAllSuppliers = async (req, res) => {
   try {
     const suppliers = await prisma.supplier.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, supplier_name: { not: DIRECT_SUPPLIER_NAME } },
       orderBy: { supplier_name: "asc" },
     });
     res.status(200).json(suppliers);
@@ -20,7 +21,7 @@ export const getAllSuppliers = async (req, res) => {
 export const getArchivedSuppliers = async (req, res) => {
   try {
     const suppliers = await prisma.supplier.findMany({
-      where: { deleted_at: { not: null } },
+      where: { deleted_at: { not: null }, supplier_name: { not: DIRECT_SUPPLIER_NAME } },
       orderBy: { deleted_at: "desc" },
     });
     res.status(200).json(suppliers);
