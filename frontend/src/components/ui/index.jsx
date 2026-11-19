@@ -89,7 +89,7 @@ export const Label = ({ className, ...props }) => (
 )
 
 export const Table = ({ className, ...props }) => (
-  <div className="w-full overflow-auto">
+  <div className="w-full overflow-x-auto">
     <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
   </div>
 )
@@ -99,7 +99,7 @@ export const TableRow = ({ className, ...props }) => (
   <tr className={cn("border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-primary-muted)]/40", className)} {...props} />
 )
 export const TableHead = ({ className, ...props }) => (
-  <th className={cn("h-11 px-4 text-left align-middle font-medium text-[var(--color-muted)] text-xs uppercase tracking-wide", className)} {...props} />
+  <th className={cn("h-11 px-4 text-left align-middle font-medium text-[var(--color-muted)] text-xs uppercase tracking-wide whitespace-nowrap", className)} {...props} />
 )
 export const TableCell = ({ className, ...props }) => (
   <td className={cn("px-4 py-3 align-middle text-[var(--color-text)]", className)} {...props} />

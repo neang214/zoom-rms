@@ -69,23 +69,25 @@ export default function ActiveOrdersTable({ orders, onPay, onView, onDelete }) {
   const { t } = useLang()
   return (
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl overflow-hidden">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-[var(--color-border)] bg-[var(--color-primary-muted)]/30">
-            <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.order")}</th>
-            <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.table")}</th>
-            <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.items")}</th>
-            <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.status")}</th>
-            <th className="text-right text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.total")}</th>
-            <th className="text-right text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3">{t("common.actions")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map(order => (
-            <OrderRow key={order.order_id} order={order} onPay={onPay} onView={onView} onDelete={onDelete} />
-          ))}
-        </tbody>
-      </table>
+      <div className="w-full overflow-x-auto">
+        <table className="w-full min-w-[600px]">
+          <thead>
+            <tr className="border-b border-[var(--color-border)] bg-[var(--color-primary-muted)]/30">
+              <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.order")}</th>
+              <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.table")}</th>
+              <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.items")}</th>
+              <th className="text-left text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.status")}</th>
+              <th className="text-right text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.total")}</th>
+              <th className="text-right text-[10px] font-semibold text-[var(--color-muted)] uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{t("common.actions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map(order => (
+              <OrderRow key={order.order_id} order={order} onPay={onPay} onView={onView} onDelete={onDelete} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

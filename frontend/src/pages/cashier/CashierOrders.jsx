@@ -185,8 +185,8 @@ export default function CashierOrders() {
         subtitle={`• ${stats.active} ${t("cashier.statActive")}`} />
 
       {/* Search & Scan */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
           <input
             value={search}
