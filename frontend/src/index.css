@@ -1,133 +1,122 @@
 @import "tailwindcss";
 
 /*
- * Refined palette — Cool Nordic Spruce & Crisp Slate ("ZOOM Garden Café & Wine")
- * Shifted away from warm matcha/tea tones (yellow-tinted cream, sandy beige, warm brown)
- * to crisp, clean, cool-neutral slate backgrounds with deep frosted pine and high-contrast
- * cool-slate typography. Fully passes WCAG AA & AAA contrast guidelines.
+ * ZOOM — Garden Café & Wine Design System
+ * Modern Botanical Hospitality: Warm porcelain canvas, crisp white cards,
+ * deep forest pine primary, subtle burgundy wine & oak amber accents.
  */
 @theme {
-  --color-primary: #059669;
-  --color-primary-light: #10b981;
-  --color-primary-dark: #047857;
-  --color-primary-muted: #ecfdf5;
+  --color-primary: #1b4d3e;
+  --color-primary-light: #2d6a56;
+  --color-primary-dark: #13382d;
+  --color-primary-muted: #ebf3ef;
+
+  --color-wine: #7c2d42;
+  --color-wine-muted: #f8ebee;
 
   --color-accent: #b45309;
   --color-accent-light: #d97706;
   --color-accent-muted: #fef3c7;
 
-  --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;
-  --color-muted: #64748b;
-  --color-text: #0f172a;
-  --color-text-secondary: #334155;
-  --color-background: #f8fafc;
+  --color-background: #f6f6f3;
   --color-surface: #ffffff;
+  --color-surface-subtle: #eff1ed;
+  --color-border: #e4e7e2;
+  --color-border-strong: #cdd3cb;
+
+  --color-text: #141917;
+  --color-text-secondary: #434e49;
+  --color-muted: #6c7872;
   --color-text-invert: #ffffff;
 
-  --color-success: #059669;
+  /* Always-dark contrast banner (CartBar, total strips) — safe in light & dark mode */
+  --color-banner-bg: #141e1a;
+  --color-banner-text: #ffffff;
+
+  --color-success: #15803d;
   --color-warning: #b45309;
   --color-danger: #dc2626;
   --color-danger-muted: #fee2e2;
-  --color-info: #0284c7;
+  --color-info: #0369a1;
   --color-info-muted: #e0f2fe;
-  --color-flame: #ea580c;
+  --color-flame: #c2410c;
   --color-flame-muted: #ffedd5;
-  --color-plum: #7c3aed;
+  --color-plum: #6d28d9;
   --color-plum-muted: #f3e8ff;
 
-  --font-sans: 'Roboto', 'Kantumruy Pro', sans-serif;
-  --font-display: 'Roboto', 'Kantumruy Pro', sans-serif;
-
-  /* Larger, more readable typography scale across the frontend */
-  --text-xs: 0.85rem;
-  --text-xs--line-height: 1.3rem;
-  --text-sm: 0.95rem;
-  --text-sm--line-height: 1.45rem;
-  --text-base: 1.0625rem;
-  --text-base--line-height: 1.6rem;
-  --text-lg: 1.2rem;
-  --text-lg--line-height: 1.75rem;
-  --text-xl: 1.35rem;
-  --text-xl--line-height: 1.85rem;
+  --font-sans: "Plus Jakarta Sans", "Kantumruy Pro", system-ui, -apple-system, sans-serif;
+  --font-display: "Playfair Display", "Kantumruy Pro", Georgia, serif;
 }
 
-:root { color-scheme: light; }
+:root {
+  color-scheme: light;
+}
 
 .dark {
-  --color-background: #090d14;
-  --color-surface: #151e2b;
-  --color-border: #233044;
-  --color-border-strong: #33445e;
-  --color-text: #ffffff;
-  --color-text-secondary: #cbd5e1;
-  --color-muted: #94a3b8;
-  --color-primary: #10b981;
-  --color-primary-light: #34d399;
-  --color-primary-dark: #059669;
-  --color-primary-muted: #0f382c;
-  --color-text-invert: #090d14;
+  --color-background: #0d1210;
+  --color-surface: #151c19;
+  --color-surface-subtle: #1c2621;
+  --color-border: #25312c;
+  --color-border-strong: #34453e;
+
+  --color-text: #f3f6f4;
+  --color-text-secondary: #b9c5bf;
+  --color-muted: #84948c;
+  --color-text-invert: #0d1210;
+
+  --color-primary: #34a883;
+  --color-primary-light: #4fc39d;
+  --color-primary-dark: #258a6a;
+  --color-primary-muted: #142f26;
+
+  --color-wine: #e07b94;
+  --color-wine-muted: #321821;
+
+  --color-banner-bg: #1e2a25;
+  --color-banner-text: #f8faf9;
+
   --color-accent: #f59e0b;
   --color-accent-light: #fbbf24;
-  --color-accent-muted: #3d2b10;
-  --color-warning: #f59e0b;
+  --color-accent-muted: #382810;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
   --color-danger: #f87171;
-  --color-danger-muted: #3f191f;
+  --color-danger-muted: #3a191f;
   --color-info: #38bdf8;
-  --color-info-muted: #0f2e47;
+  --color-info-muted: #0f2c44;
   --color-flame: #fb923c;
-  --color-flame-muted: #3d2214;
+  --color-flame-muted: #3a2013;
   --color-plum: #c084fc;
-  --color-plum-muted: #321c44;
+  --color-plum-muted: #2e1b40;
+
   color-scheme: dark;
 }
 
-.dark .shadow-xs,
-.dark .shadow-sm {
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.45), 0 1px 2px -1px rgba(0, 0, 0, 0.35);
+* {
+  box-sizing: border-box;
 }
 
-.dark .shadow-md {
-  box-shadow: 0 4px 8px -1px rgba(0, 0, 0, 0.55), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-}
-
-.dark .shadow-lg,
-.dark .shadow-xl {
-  box-shadow: 0 12px 20px -3px rgba(0, 0, 0, 0.65), 0 4px 6px -4px rgba(0, 0, 0, 0.45);
-}
-
-* { box-sizing: border-box; }
-
-*, ::before, ::after {
+*,
+::before,
+::after {
   border-color: var(--color-border);
 }
 
 html {
-  font-size: 17px;
+  font-size: 16px;
 }
 
-html, body, #root {
+html[lang="km"] body {
+  line-height: 1.6;
+}
+
+html,
+body,
+#root {
   height: 100%;
   margin: 0;
   padding: 0;
-}
-
-/* Scale up micro arbitrary text classes for better readability */
-.text-\[9px\],
-.text-\[10px\] {
-  font-size: 0.78rem !important;
-  line-height: 1.15rem !important;
-}
-
-.text-\[11px\],
-.text-\[12px\] {
-  font-size: 0.85rem !important;
-  line-height: 1.25rem !important;
-}
-
-.text-\[13px\] {
-  font-size: 0.92rem !important;
-  line-height: 1.35rem !important;
 }
 
 body {
@@ -136,20 +125,69 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+}
+
+.dark .shadow-xs,
+.dark .shadow-sm {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.45), 0 1px 2px -1px rgba(0, 0, 0, 0.35);
+}
+
+.dark .shadow-md {
+  box-shadow: 0 6px 14px -2px rgba(0, 0, 0, 0.55), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+}
+
+.dark .shadow-lg,
+.dark .shadow-xl {
+  box-shadow: 0 14px 28px -4px rgba(0, 0, 0, 0.65), 0 6px 10px -4px rgba(0, 0, 0, 0.45);
+}
+
+/* Hide scrollbars cleanly for horizontal pill bars */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Top loading bar animation */
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-loading-bar {
+  animation: loading-slide 1.2s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 6px;
-  border: 2px solid var(--color-background);
+  background: var(--color-border-strong);
+  border-radius: 999px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
-
-body { transition: background-color 0.2s ease, color 0.2s ease; }
-
-h1, h2, h3 { letter-spacing: -0.01em; }
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
 
 @media print {
   aside,
@@ -159,7 +197,8 @@ h1, h2, h3 { letter-spacing: -0.01em; }
   .no-print {
     display: none !important;
   }
-  body, #root {
+  body,
+  #root {
     background: #ffffff !important;
     color: #000000 !important;
   }

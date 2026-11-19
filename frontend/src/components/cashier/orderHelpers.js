@@ -1,35 +1,25 @@
 import JsBarcode from "jsbarcode"
+import { KHR_RATE, orderTotal, escapeHtml } from "@/lib/currency"
 
-export const KHR_RATE = 4100
-
-export const orderTotal = (order) =>
-  order?.order_items?.reduce((sum, oi) => sum + Number(oi.unit_price) * oi.quantity, 0) || 0
+export { KHR_RATE, orderTotal }
 
 export const statusConfig = {
   Pending: {
     labelKey: "status.pending",
-    color: "bg-[var(--color-border)] text-[var(--color-text-secondary)]",
+    color: "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)] border border-[var(--color-border)]",
   },
   Preparing: {
     labelKey: "status.preparing",
-    color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)]",
+    color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20",
   },
   Served: {
     labelKey: "status.served",
-    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
   },
   Paid: {
     labelKey: "status.paid",
-    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)]",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
   },
-}
-
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
 }
 
 function generateBarcodeSvg(value) {
@@ -52,6 +42,35 @@ function generateBarcodeSvg(value) {
   }
 }
 
+function scheduleIframePrint(iframe, beforePrint) {
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    try {
+      iframe.remove()
+    } catch {}
+  }
+
+  setTimeout(() => {
+    try {
+      beforePrint?.()
+      const win = iframe.contentWindow
+      if (!win) {
+        cleanup()
+        return
+      }
+      win.onafterprint = cleanup
+      win.focus()
+      win.print()
+      // Fallback cleanup for browsers that don't fire onafterprint reliably
+      setTimeout(cleanup, 60000)
+    } catch {
+      cleanup()
+    }
+  }, 150)
+}
+
 // ============================================================================
 // Shared 80mm POS Thermal CSS (For Cashier)
 // ============================================================================
@@ -67,7 +86,7 @@ const THERMAL_80MM_CSS = `
     padding: 0;
     background: #ffffff;
     color: #000000;
-    font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
     font-size: 11px;
     line-height: 1.35;
   }
@@ -169,7 +188,6 @@ const THERMAL_80MM_CSS = `
   }
 `
 
-// Prints 80mm thermal slip inside a hidden iframe (for Cashier)
 function printThermalReceiptHtml(title, bodyHtml) {
   const existing = document.getElementById("zoom-thermal-print-iframe")
   if (existing) existing.remove()
@@ -208,27 +226,18 @@ function printThermalReceiptHtml(title, bodyHtml) {
   `)
   doc.close()
 
-  setTimeout(() => {
-    try {
-      const ticket = doc.getElementById("receipt-ticket")
-      if (ticket) {
-        const heightMm = Math.max(110, Math.ceil(ticket.offsetHeight * 0.2646) + 8)
-        const pageStyle = doc.getElementById("dynamic-page-size")
-        if (pageStyle) {
-          pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0mm; }`
-        }
+  scheduleIframePrint(iframe, () => {
+    const ticket = doc.getElementById("receipt-ticket")
+    if (ticket) {
+      const heightMm = Math.max(110, Math.ceil(ticket.offsetHeight * 0.2646) + 8)
+      const pageStyle = doc.getElementById("dynamic-page-size")
+      if (pageStyle) {
+        pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0mm; }`
       }
-      iframe.contentWindow.focus()
-      iframe.contentWindow.print()
-    } finally {
-      setTimeout(() => {
-        iframe.remove()
-      }, 3000)
     }
-  }, 150)
+  })
 }
 
-// Prints full A4 document inside a hidden iframe (for Admin)
 export function printA4DocumentHtml(title, bodyHtml) {
   const existing = document.getElementById("zoom-a4-print-iframe")
   if (existing) existing.remove()
@@ -264,8 +273,8 @@ export function printA4DocumentHtml(title, bodyHtml) {
             print-color-adjust: exact;
           }
           body {
-            font-family: 'Roboto', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
-            color: #0f172a;
+            font-family: 'Plus Jakarta Sans', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+            color: #141917;
             background: #ffffff;
             margin: 0;
             padding: 0;
@@ -276,12 +285,12 @@ export function printA4DocumentHtml(title, bodyHtml) {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            border-bottom: 2px solid #059669;
+            border-bottom: 2px solid #1b4d3e;
             padding-bottom: 14px;
             margin-bottom: 18px;
           }
           .brand-card {
-            border: 2px solid #059669;
+            border: 2px solid #1b4d3e;
             border-radius: 10px;
             padding: 6px 14px;
             text-align: center;
@@ -289,13 +298,13 @@ export function printA4DocumentHtml(title, bodyHtml) {
           .brand-name {
             font-size: 22px;
             font-weight: 900;
-            color: #059669;
+            color: #1b4d3e;
             letter-spacing: 2px;
             line-height: 1;
           }
           .brand-sub {
             font-size: 10px;
-            color: #334155;
+            color: #434e49;
             font-weight: 600;
             margin-top: 3px;
           }
@@ -306,39 +315,39 @@ export function printA4DocumentHtml(title, bodyHtml) {
             margin-bottom: 18px;
           }
           .kpi-box {
-            border: 1px solid #cbd5e1;
+            border: 1px solid #cdd3cb;
             border-radius: 8px;
             padding: 10px 12px;
-            background: #f8fafc;
+            background: #f6f6f3;
           }
           .kpi-box.primary {
-            background: #ecfdf5;
-            border-color: #059669;
+            background: #ebf3ef;
+            border-color: #1b4d3e;
           }
           .kpi-label {
             font-size: 10px;
             text-transform: uppercase;
-            color: #64748b;
+            color: #6c7872;
             font-weight: 700;
           }
           .kpi-val {
             font-size: 18px;
             font-weight: 800;
-            color: #0f172a;
+            color: #141917;
             margin-top: 3px;
           }
           .kpi-box.primary .kpi-val {
-            color: #059669;
+            color: #1b4d3e;
           }
           .kpi-sub {
             font-size: 10px;
-            color: #64748b;
+            color: #6c7872;
             margin-top: 2px;
           }
           h3 {
             font-size: 13px;
             font-weight: 700;
-            color: #0f172a;
+            color: #141917;
             margin: 16px 0 8px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -348,27 +357,27 @@ export function printA4DocumentHtml(title, bodyHtml) {
             border-collapse: collapse;
           }
           th {
-            background: #059669;
+            background: #1b4d3e;
             color: #ffffff;
             font-size: 10.5px;
             font-weight: 700;
             text-transform: uppercase;
             padding: 7px 8px;
             text-align: left;
-            border: 1px solid #047857;
+            border: 1px solid #13382d;
           }
           td {
             padding: 6px 8px;
-            border: 1px solid #cbd5e1;
+            border: 1px solid #cdd3cb;
             font-size: 11px;
           }
           tr:nth-child(even) td {
-            background: #f8fafc;
+            background: #f6f6f3;
           }
           tfoot td {
-            background: #ecfdf5 !important;
+            background: #ebf3ef !important;
             font-weight: 800;
-            border-color: #059669;
+            border-color: #1b4d3e;
           }
           .right { text-align: right; }
           .center { text-align: center; }
@@ -377,7 +386,7 @@ export function printA4DocumentHtml(title, bodyHtml) {
             display: flex;
             justify-content: space-between;
             font-size: 11px;
-            color: #475569;
+            color: #434e49;
           }
         </style>
       </head>
@@ -388,16 +397,7 @@ export function printA4DocumentHtml(title, bodyHtml) {
   `)
   doc.close()
 
-  setTimeout(() => {
-    try {
-      iframe.contentWindow.focus()
-      iframe.contentWindow.print()
-    } finally {
-      setTimeout(() => {
-        iframe.remove()
-      }, 3000)
-    }
-  }, 150)
+  scheduleIframePrint(iframe)
 }
 
 // ============================================================================
@@ -411,7 +411,9 @@ export function printOrderReceipt(order) {
   const orderCode = `ORD-${String(order.order_id).padStart(4, "0")}`
   const isPaid = (order.is_paid ?? order.status === "Paid") || order.payments?.length > 0
   const paymentMethod = order.payments?.[0]?.method?.method_name || (isPaid ? "Paid" : "Unpaid")
-  const dateStr = order.order_date ? new Date(order.order_date).toLocaleString("en-GB") : new Date().toLocaleString("en-GB")
+  const dateStr = order.order_date
+    ? new Date(order.order_date).toLocaleString("en-GB")
+    : new Date().toLocaleString("en-GB")
   const barcodeSvg = generateBarcodeSvg(orderCode)
 
   const itemsHtml = (order.order_items || [])
@@ -520,16 +522,17 @@ export function printOrderReceipt(order) {
 }
 
 // ============================================================================
-// 2. Cashier: 80mm Daily Closing Slip (Z-Report on Thermal Roll)
+// 2. Cashier: 80mm Daily Closing Slip (Z-Report)
 // ============================================================================
 export function printDailyReport({ date, displayDate, tableLabel, data }) {
   if (!data) return
   const orders = data.orders || []
   const totalOrders = data.summary?.total_orders ?? orders.length
-  const paidOrdersCount = data.summary?.paid_orders ?? orders.filter((o) => o.status === "Paid").length
+  const paidOrdersCount =
+    data.summary?.paid_orders ?? orders.filter((o) => o.status === "Paid").length
   const totalRevenueUSD = Number(
     data.summary?.total_revenue ??
-    orders.filter((o) => o.status === "Paid").reduce((s, o) => s + orderTotal(o), 0)
+      orders.filter((o) => o.status === "Paid").reduce((s, o) => s + orderTotal(o), 0)
   )
   const totalRevenueKHR = Math.round(totalRevenueUSD * KHR_RATE)
 
@@ -556,7 +559,10 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
   const orderRowsHtml = orders
     .map((o) => {
       const t = orderTotal(o)
-      const time = new Date(o.order_date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      const time = new Date(o.order_date).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
       return `
         <tr>
           <td>#${String(o.order_id).padStart(4, "0")}</td>
@@ -580,23 +586,14 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
 
     <div class="divider-solid"></div>
 
-    <div class="meta-row">
-      <span>Total Orders:</span>
-      <span class="bold">${totalOrders}</span>
-    </div>
-    <div class="meta-row">
-      <span>Paid Orders:</span>
-      <span class="bold">${paidOrdersCount}</span>
-    </div>
-    <div class="meta-row">
-      <span>Unpaid / Open:</span>
-      <span class="bold">${totalOrders - paidOrdersCount}</span>
-    </div>
+    <div class="meta-row"><span>Total Orders:</span><span class="bold">${totalOrders}</span></div>
+    <div class="meta-row"><span>Paid Orders:</span><span class="bold">${paidOrdersCount}</span></div>
+    <div class="meta-row"><span>Unpaid / Open:</span><span class="bold">${totalOrders - paidOrdersCount}</span></div>
 
     ${methodsHtml
       ? `<div class="divider"></div>
-           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
-           ${methodsHtml}`
+         <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+         ${methodsHtml}`
       : ""
     }
 
@@ -622,9 +619,7 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
           <th class="right">Amount</th>
         </tr>
       </thead>
-      <tbody>
-        ${orderRowsHtml}
-      </tbody>
+      <tbody>${orderRowsHtml}</tbody>
     </table>
 
     <div class="divider-solid"></div>
@@ -639,7 +634,7 @@ export function printDailyReport({ date, displayDate, tableLabel, data }) {
 }
 
 // ============================================================================
-// 3. Cashier: 80mm Period Summary Slip (For Cashier Payment & Report Page)
+// 3. Cashier: 80mm Period Summary Slip
 // ============================================================================
 export function printThermalReport({
   period = "Daily",
@@ -697,36 +692,21 @@ export function printThermalReport({
 
     <div class="divider-solid"></div>
 
-    <div class="meta-row">
-      <span>Total Orders:</span>
-      <span class="bold">${periodOrders.length}</span>
-    </div>
-    <div class="meta-row">
-      <span>Paid Orders:</span>
-      <span class="bold">${paidOrders.length}</span>
-    </div>
-    <div class="meta-row">
-      <span>Avg Ticket:</span>
-      <span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span>
-    </div>
+    <div class="meta-row"><span>Total Orders:</span><span class="bold">${periodOrders.length}</span></div>
+    <div class="meta-row"><span>Paid Orders:</span><span class="bold">${paidOrders.length}</span></div>
+    <div class="meta-row"><span>Avg Ticket:</span><span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span></div>
 
     ${methodsHtml
       ? `<div class="divider"></div>
-           <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
-           ${methodsHtml}`
+         <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+         ${methodsHtml}`
       : ""
     }
 
     <div class="divider-solid"></div>
 
-    <div class="total-row">
-      <span>TOTAL (USD)</span>
-      <span>$${revUSD.toFixed(2)}</span>
-    </div>
-    <div class="khr-row">
-      <span>សរុប (KHR)</span>
-      <span>៛${revKHR.toLocaleString()}</span>
-    </div>
+    <div class="total-row"><span>TOTAL (USD)</span><span>$${revUSD.toFixed(2)}</span></div>
+    <div class="khr-row"><span>សរុប (KHR)</span><span>៛${revKHR.toLocaleString()}</span></div>
 
     <div class="divider"></div>
 
@@ -739,9 +719,7 @@ export function printThermalReport({
           <th class="right">Total</th>
         </tr>
       </thead>
-      <tbody>
-        ${orderRowsHtml}
-      </tbody>
+      <tbody>${orderRowsHtml}</tbody>
     </table>
 
     <div class="divider-solid"></div>
@@ -754,7 +732,7 @@ export function printThermalReport({
 }
 
 // ============================================================================
-// 4. Admin: Full A4 Executive Sales Report (For Admin Reports Page)
+// 4. Admin: Full A4 Executive Sales Report
 // ============================================================================
 export function printExecutiveReport({
   period = "Daily",
@@ -774,7 +752,8 @@ export function printExecutiveReport({
     .map((o) => {
       const t = orderTotal(o)
       const itemsCount = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
-      const method = o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
+      const method =
+        o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
       return `
         <tr>
           <td><strong>ORD-${String(o.order_id).padStart(4, "0")}</strong></td>
@@ -797,9 +776,9 @@ export function printExecutiveReport({
         <div class="brand-sub">Garden Café &amp; Wine · Sen Sok</div>
       </div>
       <div class="right">
-        <div style="font-size:18px; font-weight:800; color:#0f172a;">EXECUTIVE SALES REPORT</div>
-        <div style="font-size:12px; color:#059669; font-weight:700; margin-top:2px;">Period: ${escapeHtml(period)}</div>
-        <div style="font-size:10px; color:#64748b; margin-top:2px;">Generated: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+        <div style="font-size:18px; font-weight:800; color:#141917;">EXECUTIVE SALES REPORT</div>
+        <div style="font-size:12px; color:#1b4d3e; font-weight:700; margin-top:2px;">Period: ${escapeHtml(period)}</div>
+        <div style="font-size:10px; color:#6c7872; margin-top:2px;">Generated: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
       </div>
     </div>
 
@@ -840,9 +819,7 @@ export function printExecutiveReport({
           <th class="right">Total (KHR)</th>
         </tr>
       </thead>
-      <tbody>
-        ${orderRowsHtml}
-      </tbody>
+      <tbody>${orderRowsHtml}</tbody>
       <tfoot>
         <tr>
           <td colspan="6" class="right">PAID REVENUE TOTAL (${paidOrders.length} Paid Orders):</td>

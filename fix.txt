@@ -1,0 +1,1824 @@
+Let's merge the **bug fixes, security/performance upgrades, refactoring, and a full Modern Botanical Café + Clean POS redesign** into one cohesive overhaul for **ZOOM — Garden Café & Wine**.
+
+We'll roll it out in **5 clean, non-breaking phases** so you can drop each batch straight into your project without breaking existing screens:
+
+1. **Phase 1 (Below) — Foundation:** Modern Botanical Café design system, fixed typography & dark-mode tokens, shared helpers (`currency.js`), `axios` 401 auto-logout + loading bar, leak-free `socket.js`, lazy-loaded `App.jsx`, redesigned `Layout` + `Login`.
+2. **Phase 2 — Guest QR Experience:** Redesign `GuestLanding`, `GuestOrder`, and `GuestOrderStatus` (category pills, appetizing menu cards, cart persistence, fixed retry/`NaN`/scanner bugs, proper post-order queue confirmation).
+3. **Phase 3 — Cashier Split-Screen POS & Checkout:** 2-column POS workspace (`CashierMenu`), live card-based `CashierOrders` (fixed stale `payOrder` + debounced socket), React 19-safe `ReceiptScanner`, upgraded `PaymentDialog` + reliable `orderHelpers.js` printing.
+4. **Phase 4 — Kitchen & Barista KDS:** Multi-column open ticket board (`StationOrders`) with live wait timers, double-tap lock, per-item status badges, and de-duplicated socket fetches.
+5. **Phase 5 — Admin Suite & Refactoring:** Polished `Dashboard`, `Menu`, `Stock` (compressed uploads), `Tables`, `Suppliers`, `Users`, `Reports` (XSS/CSV-safe exports + active-tab refresh), and unified `OrderHistoryView`.
+
+---
+
+## Phase 1: Foundation (Design System, Core Fixes, Layout, Login & App Shell)
+
+> You can also safely delete unused `frontend/src/App.css`.
+
+### 1. `frontend/index.html`
+Adds `Playfair Display` (editorial café/wine headings) + `Plus Jakarta Sans` (crisp modern UI) alongside `Kantumruy Pro` (Khmer).
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZOOM — Garden Cafe &amp; Wine | Restaurant Management System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;500;600;700&family=Playfair+Display:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+```
+
+---
+
+### 2. `frontend/src/index.css`
+Replaces the bloated `17px` / `!important` font overrides and generic emerald SaaS palette with a refined **Botanical Forest Pine & Porcelain** design system, dedicated dark-mode banner tokens (fixing the invisible white-on-white cart bug), and clean Khmer line-height support.
+
+```css
+@import "tailwindcss";
+
+/*
+ * ZOOM — Garden Café & Wine Design System
+ * Modern Botanical Hospitality: Warm porcelain canvas, crisp white cards,
+ * deep forest pine primary, subtle burgundy wine & oak amber accents.
+ */
+@theme {
+  --color-primary: #1b4d3e;
+  --color-primary-light: #2d6a56;
+  --color-primary-dark: #13382d;
+  --color-primary-muted: #ebf3ef;
+
+  --color-wine: #7c2d42;
+  --color-wine-muted: #f8ebee;
+
+  --color-accent: #b45309;
+  --color-accent-light: #d97706;
+  --color-accent-muted: #fef3c7;
+
+  --color-background: #f6f6f3;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #eff1ed;
+  --color-border: #e4e7e2;
+  --color-border-strong: #cdd3cb;
+
+  --color-text: #141917;
+  --color-text-secondary: #434e49;
+  --color-muted: #6c7872;
+  --color-text-invert: #ffffff;
+
+  /* Always-dark contrast banner (CartBar, total strips) — safe in light & dark mode */
+  --color-banner-bg: #141e1a;
+  --color-banner-text: #ffffff;
+
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #dc2626;
+  --color-danger-muted: #fee2e2;
+  --color-info: #0369a1;
+  --color-info-muted: #e0f2fe;
+  --color-flame: #c2410c;
+  --color-flame-muted: #ffedd5;
+  --color-plum: #6d28d9;
+  --color-plum-muted: #f3e8ff;
+
+  --font-sans: "Plus Jakarta Sans", "Kantumruy Pro", system-ui, -apple-system, sans-serif;
+  --font-display: "Playfair Display", "Kantumruy Pro", Georgia, serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  --color-background: #0d1210;
+  --color-surface: #151c19;
+  --color-surface-subtle: #1c2621;
+  --color-border: #25312c;
+  --color-border-strong: #34453e;
+
+  --color-text: #f3f6f4;
+  --color-text-secondary: #b9c5bf;
+  --color-muted: #84948c;
+  --color-text-invert: #0d1210;
+
+  --color-primary: #34a883;
+  --color-primary-light: #4fc39d;
+  --color-primary-dark: #258a6a;
+  --color-primary-muted: #142f26;
+
+  --color-wine: #e07b94;
+  --color-wine-muted: #321821;
+
+  --color-banner-bg: #1e2a25;
+  --color-banner-text: #f8faf9;
+
+  --color-accent: #f59e0b;
+  --color-accent-light: #fbbf24;
+  --color-accent-muted: #382810;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-danger-muted: #3a191f;
+  --color-info: #38bdf8;
+  --color-info-muted: #0f2c44;
+  --color-flame: #fb923c;
+  --color-flame-muted: #3a2013;
+  --color-plum: #c084fc;
+  --color-plum-muted: #2e1b40;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+*,
+::before,
+::after {
+  border-color: var(--color-border);
+}
+
+html {
+  font-size: 16px;
+}
+
+html[lang="km"] body {
+  line-height: 1.6;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+}
+
+.dark .shadow-xs,
+.dark .shadow-sm {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.45), 0 1px 2px -1px rgba(0, 0, 0, 0.35);
+}
+
+.dark .shadow-md {
+  box-shadow: 0 6px 14px -2px rgba(0, 0, 0, 0.55), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+}
+
+.dark .shadow-lg,
+.dark .shadow-xl {
+  box-shadow: 0 14px 28px -4px rgba(0, 0, 0, 0.65), 0 6px 10px -4px rgba(0, 0, 0, 0.45);
+}
+
+/* Hide scrollbars cleanly for horizontal pill bars */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Top loading bar animation */
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-loading-bar {
+  animation: loading-slide 1.2s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
+@media print {
+  aside,
+  header,
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+  body,
+  #root {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+}
+```
+
+---
+
+### 3. `frontend/src/lib/currency.js` *(New shared module)*
+Centralizes `KHR_RATE`, currency formatting, `orderTotal`, `toLocalDateStr`, HTML escaping, CSV formula-injection neutralization, and JPEG image normalization for both Menu and Stock uploads.
+
+```js
+export const KHR_RATE = 4100
+
+export function formatUSD(amount) {
+  const n = Number(amount) || 0
+  return `$${n.toFixed(2)}`
+}
+
+export function formatKHR(amountUSD) {
+  const n = Number(amountUSD) || 0
+  return `៛${Math.round(n * KHR_RATE).toLocaleString()}`
+}
+
+export function orderTotal(order) {
+  return (
+    order?.order_items?.reduce(
+      (sum, oi) => sum + Number(oi.unit_price || 0) * Number(oi.quantity || 0),
+      0
+    ) || 0
+  )
+}
+
+export function toLocalDateStr(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+export function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+/**
+ * Neutralizes spreadsheet formula injection (cells starting with =, +, -, @, tab, CR)
+ * before quoting for CSV export.
+ */
+export function sanitizeCsvCell(val) {
+  let s = String(val ?? "")
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`
+  }
+  return `"${s.replace(/"/g, '""')}"`
+}
+
+/**
+ * Resizes and normalizes uploaded photos to JPEG so phone photos don't bloat uploads.
+ */
+export function normalizeImageToJpg(file, maxWidth = 800, quality = 0.85) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      let { width, height } = img
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width)
+        width = maxWidth
+      }
+      const canvas = document.createElement("canvas")
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext("2d")
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file)
+            return
+          }
+          const cleanName = (file.name || "image").replace(/\.[^.]+$/, "") + ".jpg"
+          resolve(new File([blob], cleanName, { type: "image/jpeg" }))
+        },
+        "image/jpeg",
+        quality
+      )
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(file)
+    }
+
+    img.src = objectUrl
+  })
+}
+```
+
+---
+
+### 4. `frontend/src/lib/noteTags.js`
+Adds Khmer allergy detection (`អាលែកហ្ស៊ី`) in addition to English.
+
+```js
+export const NOTE_TAGS = [
+  { id: "no_ice", labelKey: "noteTag.noIce" },
+  { id: "less_sugar", labelKey: "noteTag.lessSugar" },
+  { id: "no_onion", labelKey: "noteTag.noOnion" },
+  { id: "extra_spicy", labelKey: "noteTag.extraSpicy" },
+  { id: "less_spicy", labelKey: "noteTag.lessSpicy" },
+  { id: "allergy", labelKey: "noteTag.allergy", allergy: true },
+]
+
+export function isAllergyNote(note) {
+  if (!note) return false
+  return /allerg|អាលែកហ្ស៊ី/i.test(note)
+}
+```
+
+---
+
+### 5. `frontend/src/services/axios.js`
+- Wires up `useLoadingBarStore` for smooth global request feedback.
+- Stops sending `x-guest-session` on authenticated staff API calls.
+- Triggers clean Zustand logout on staff `401` so expired sessions redirect to `/login` automatically.
+
+```js
+import axios from "axios"
+import { useLoadingBarStore } from "../context/loadingBarContext"
+
+export const GUEST_SESSION_KEY = "zoom_guest_session"
+
+let onUnauthorized = null
+
+export function setUnauthorizedHandler(handler) {
+  onUnauthorized = handler
+}
+
+const clientApi = axios.create({
+  baseURL: (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, ""),
+  withCredentials: true,
+  headers: { "Content-Type": "application/json" },
+})
+
+clientApi.interceptors.request.use(
+  (config) => {
+    if (!config.silent) {
+      useLoadingBarStore.getState().start()
+      config._trackedByLoadingBar = true
+    }
+
+    const token = sessionStorage.getItem("rms_token")
+    if (token) {
+      config.headers["Authorization"] = `Bearer ${token}`
+    } else {
+      const guestSession = localStorage.getItem(GUEST_SESSION_KEY)
+      if (guestSession) {
+        config.headers["x-guest-session"] = guestSession
+      }
+    }
+
+    return config
+  },
+  (error) => Promise.reject(error)
+)
+
+clientApi.interceptors.response.use(
+  (response) => {
+    if (response.config?._trackedByLoadingBar) {
+      useLoadingBarStore.getState().stop()
+    }
+    return response
+  },
+  (error) => {
+    if (error?.config?._trackedByLoadingBar) {
+      useLoadingBarStore.getState().stop()
+    }
+
+    if (error?.response?.status === 401) {
+      const hadStaffSession =
+        Boolean(sessionStorage.getItem("rms_token")) ||
+        sessionStorage.getItem("rms-tab-authenticated") === "true"
+
+      sessionStorage.removeItem("rms_token")
+      sessionStorage.removeItem("rms-tab-authenticated")
+      sessionStorage.removeItem("rms-auth-storage")
+      localStorage.removeItem("rms_token")
+
+      if (hadStaffSession) {
+        onUnauthorized?.()
+      }
+    }
+
+    return Promise.reject(error)
+  }
+)
+
+export default clientApi
+```
+
+---
+
+### 6. `frontend/src/context/authContext.js`
+Connects to `setUnauthorizedHandler` and properly tracks `error` state.
+
+```js
+import { create } from "zustand"
+import { persist, createJSONStorage } from "zustand/middleware"
+import api, { setUnauthorizedHandler } from "../services/axios"
+import { resetSocket } from "../services/socket"
+
+const TAB_SESSION_KEY = "rms-tab-authenticated"
+
+export const authContext = create(
+  persist(
+    (set) => ({
+      user: null,
+      isLoading: false,
+      error: null,
+
+      checkAuth: async () => {
+        const isTabAuthed = sessionStorage.getItem(TAB_SESSION_KEY) === "true"
+        const token = sessionStorage.getItem("rms_token")
+
+        if (!isTabAuthed || !token) {
+          localStorage.removeItem("rms_token")
+          set({ user: null, isLoading: false, error: null })
+          return
+        }
+
+        set({ isLoading: true, error: null })
+        try {
+          const res = await api.get("/auth/me")
+          const userData = res.data.user || res.data
+          set({ user: userData, isLoading: false, error: null })
+        } catch (error) {
+          if (error.response?.status === 401 || error.response?.status === 403) {
+            sessionStorage.removeItem(TAB_SESSION_KEY)
+            sessionStorage.removeItem("rms_token")
+            sessionStorage.removeItem("rms-auth-storage")
+            localStorage.removeItem("rms_token")
+            set({ user: null, isLoading: false })
+            return
+          }
+          set({ isLoading: false })
+        }
+      },
+
+      login: async (formData) => {
+        set({ isLoading: true, error: null })
+        try {
+          const res = await api.post("/auth/login", formData)
+          const userData = res.data.user || res.data
+          if (res.data.token) {
+            sessionStorage.setItem("rms_token", res.data.token)
+          }
+          sessionStorage.setItem(TAB_SESSION_KEY, "true")
+          localStorage.removeItem("rms_token")
+          resetSocket()
+          set({ user: userData, isLoading: false, error: null })
+          return userData
+        } catch (error) {
+          const msg =
+            error?.response?.data?.message ||
+            error?.response?.data?.error ||
+            null
+          set({ user: null, isLoading: false, error: msg })
+          throw error
+        }
+      },
+
+      logout: async () => {
+        try {
+          await api.post("/auth/logout")
+        } catch (err) {
+          console.error("Logout request error:", err)
+        } finally {
+          sessionStorage.removeItem(TAB_SESSION_KEY)
+          sessionStorage.removeItem("rms_token")
+          sessionStorage.removeItem("rms-auth-storage")
+          localStorage.removeItem("rms_token")
+          localStorage.removeItem("rms-auth-storage")
+          resetSocket()
+          set({ user: null, isLoading: false, error: null })
+        }
+      },
+    }),
+    {
+      name: "rms-auth-storage",
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({ user: state.user }),
+    }
+  )
+)
+
+setUnauthorizedHandler(() => {
+  if (authContext.getState().user) {
+    resetSocket()
+    authContext.setState({ user: null, isLoading: false, error: null })
+  }
+})
+```
+
+---
+
+### 7. `frontend/src/services/socket.js`
+Fixes the uncleaned `disconnect` listener memory leaks and safely rebinds active hooks if `resetSocket()` runs.
+
+```js
+import { io } from "socket.io-client"
+import { useEffect, useRef, useState } from "react"
+
+const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL || "").replace(/\/$/, "")
+
+let socket = null
+const resetSubscribers = new Set()
+
+function getSocket() {
+  if (!socket) {
+    socket = io(SOCKET_URL, {
+      withCredentials: true,
+      transports: ["websocket", "polling"],
+      autoConnect: true,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    })
+  }
+  return socket
+}
+
+function useSocketEpoch() {
+  const [epoch, setEpoch] = useState(0)
+  useEffect(() => {
+    const bump = () => setEpoch((n) => n + 1)
+    resetSubscribers.add(bump)
+    return () => {
+      resetSubscribers.delete(bump)
+    }
+  }, [])
+  return epoch
+}
+
+export function useSocketRole(role) {
+  const epoch = useSocketEpoch()
+  const [connected, setConnected] = useState(false)
+
+  useEffect(() => {
+    if (!role) return
+    const s = getSocket()
+
+    const onConnect = () => {
+      s.emit("join_role", role)
+      setConnected(true)
+    }
+    const onDisconnect = () => setConnected(false)
+
+    if (s.connected) onConnect()
+    s.on("connect", onConnect)
+    s.on("disconnect", onDisconnect)
+
+    return () => {
+      s.off("connect", onConnect)
+      s.off("disconnect", onDisconnect)
+    }
+  }, [role, epoch])
+
+  return { socket: getSocket(), connected }
+}
+
+export function useSocketTable(tableId) {
+  const epoch = useSocketEpoch()
+  const [connected, setConnected] = useState(false)
+
+  useEffect(() => {
+    if (!tableId) return
+    const s = getSocket()
+
+    const onConnect = () => {
+      s.emit("join_table", tableId)
+      setConnected(true)
+    }
+    const onDisconnect = () => setConnected(false)
+
+    if (s.connected) onConnect()
+    s.on("connect", onConnect)
+    s.on("disconnect", onDisconnect)
+
+    return () => {
+      s.emit("leave_table", tableId)
+      s.off("connect", onConnect)
+      s.off("disconnect", onDisconnect)
+    }
+  }, [tableId, epoch])
+
+  return { socket: getSocket(), connected }
+}
+
+export function useSocketEvent(eventName, handler) {
+  const epoch = useSocketEpoch()
+  const handlerRef = useRef(handler)
+  handlerRef.current = handler
+
+  useEffect(() => {
+    if (!eventName) return
+    const s = getSocket()
+    const wrapped = (...args) => handlerRef.current?.(...args)
+    s.on(eventName, wrapped)
+    return () => s.off(eventName, wrapped)
+  }, [eventName, epoch])
+}
+
+export function resetSocket() {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+  resetSubscribers.forEach((fn) => fn())
+}
+
+export default getSocket
+```
+
+---
+
+### 8. `frontend/src/components/ui/index.jsx`
+Refines elevation, border radii, table styling, focus rings, and fixes the broken dark-mode `dark` badge/button variants.
+
+```jsx
+import * as React from "react"
+import { cn } from "@/lib/utils"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
+import * as SelectPrimitive from "@radix-ui/react-select"
+import { ChevronDown, X } from "lucide-react"
+
+export const Button = React.forwardRef(
+  ({ className, variant = "default", size = "default", ...props }, ref) => {
+    const variants = {
+      default:
+        "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] active:scale-[0.99] shadow-xs",
+      outline:
+        "border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-primary-muted)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]",
+      ghost:
+        "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text)] bg-transparent",
+      destructive:
+        "bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90 shadow-xs",
+      secondary:
+        "bg-[var(--color-surface-subtle)] text-[var(--color-text)] hover:bg-[var(--color-border)]",
+      dark:
+        "bg-[var(--color-banner-bg)] text-[var(--color-banner-text)] hover:opacity-90 shadow-xs",
+    }
+    const sizes = {
+      default: "h-10 px-4 py-2 text-sm",
+      sm: "h-8.5 px-3 text-xs",
+      lg: "h-11 px-6 text-sm",
+      icon: "h-9 w-9",
+    }
+    return (
+      <button
+        ref={ref}
+        className={cn(
+          "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 disabled:opacity-50 disabled:pointer-events-none cursor-pointer",
+          variants[variant],
+          sizes[size],
+          className
+        )}
+        {...props}
+      />
+    )
+  }
+)
+
+export const Badge = ({ className, variant = "default", ...props }) => {
+  const variants = {
+    default: "bg-[var(--color-primary)] text-white",
+    success:
+      "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
+    danger:
+      "bg-[var(--color-danger-muted)] text-[var(--color-danger)] border border-[var(--color-danger)]/20",
+    warning:
+      "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20",
+    outline:
+      "border border-[var(--color-border)] text-[var(--color-text-secondary)] bg-[var(--color-surface)]",
+    purple:
+      "bg-[var(--color-plum-muted)] text-[var(--color-plum)] border border-[var(--color-plum)]/20",
+    orange:
+      "bg-[var(--color-flame-muted)] text-[var(--color-flame)] border border-[var(--color-flame)]/20",
+    blue:
+      "bg-[var(--color-info-muted)] text-[var(--color-info)] border border-[var(--color-info)]/20",
+    secondary:
+      "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)] border border-[var(--color-border)]",
+    dark: "bg-[var(--color-banner-bg)] text-[var(--color-banner-text)]",
+  }
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
+        variants[variant],
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export const Card = ({ className, ...props }) => (
+  <div
+    className={cn(
+      "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs",
+      className
+    )}
+    {...props}
+  />
+)
+
+export const CardHeader = ({ className, ...props }) => (
+  <div className={cn("flex flex-col space-y-1.5 p-5", className)} {...props} />
+)
+
+export const CardTitle = ({ className, ...props }) => (
+  <h3
+    className={cn("font-semibold leading-none tracking-tight text-[var(--color-text)]", className)}
+    {...props}
+  />
+)
+
+export const CardContent = ({ className, ...props }) => (
+  <div className={cn("p-5 pt-0", className)} {...props} />
+)
+
+export const Input = React.forwardRef(({ className, ...props }, ref) => (
+  <input
+    ref={ref}
+    className={cn(
+      "flex h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/25 focus-visible:border-[var(--color-primary)] transition-all disabled:opacity-50",
+      className
+    )}
+    {...props}
+  />
+))
+
+export const Textarea = React.forwardRef(({ className, ...props }, ref) => (
+  <textarea
+    ref={ref}
+    className={cn(
+      "flex min-h-[80px] w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/25 focus-visible:border-[var(--color-primary)] transition-all resize-none",
+      className
+    )}
+    {...props}
+  />
+))
+
+export const Label = ({ className, ...props }) => (
+  <label
+    className={cn("text-xs font-semibold text-[var(--color-text-secondary)] leading-none", className)}
+    {...props}
+  />
+)
+
+export const Table = ({ className, ...props }) => (
+  <div className="w-full overflow-x-auto">
+    <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
+  </div>
+)
+
+export const TableHeader = ({ className, ...props }) => (
+  <thead className={cn("bg-[var(--color-surface-subtle)]/70", className)} {...props} />
+)
+
+export const TableBody = ({ ...props }) => <tbody {...props} />
+
+export const TableRow = ({ className, ...props }) => (
+  <tr
+    className={cn(
+      "border-b border-[var(--color-border)]/80 last:border-b-0 transition-colors hover:bg-[var(--color-surface-subtle)]/50",
+      className
+    )}
+    {...props}
+  />
+)
+
+export const TableHead = ({ className, ...props }) => (
+  <th
+    className={cn(
+      "h-10 px-4 text-left align-middle font-semibold text-[var(--color-muted)] text-[11px] uppercase tracking-wider whitespace-nowrap",
+      className
+    )}
+    {...props}
+  />
+)
+
+export const TableCell = ({ className, ...props }) => (
+  <td className={cn("px-4 py-3 align-middle text-[var(--color-text)]", className)} {...props} />
+)
+
+export const Dialog = DialogPrimitive.Root
+export const DialogTrigger = DialogPrimitive.Trigger
+export const DialogPortal = DialogPrimitive.Portal
+export const DialogClose = DialogPrimitive.Close
+
+export const DialogOverlay = React.forwardRef(({ className, ...props }, ref) => (
+  <DialogPrimitive.Overlay
+    ref={ref}
+    className={cn(
+      "fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      className
+    )}
+    {...props}
+  />
+))
+
+export const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => (
+  <DialogPortal>
+    <DialogOverlay />
+    <DialogPrimitive.Content
+      ref={ref}
+      className={cn(
+        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg max-h-[90dvh] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 bg-[var(--color-surface)] p-6 shadow-2xl rounded-2xl border border-[var(--color-border)] duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <DialogPrimitive.Close
+        aria-label="Close dialog"
+        className="absolute right-4 top-4 rounded-lg p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-subtle)] transition-colors cursor-pointer"
+      >
+        <X className="h-4 w-4" />
+      </DialogPrimitive.Close>
+    </DialogPrimitive.Content>
+  </DialogPortal>
+))
+
+export const DialogHeader = ({ className, ...props }) => (
+  <div className={cn("flex flex-col space-y-1", className)} {...props} />
+)
+
+export const DialogTitle = React.forwardRef(({ className, ...props }, ref) => (
+  <DialogPrimitive.Title
+    ref={ref}
+    className={cn("text-lg font-semibold text-[var(--color-text)]", className)}
+    {...props}
+  />
+))
+
+export const DialogDescription = React.forwardRef(({ className, ...props }, ref) => (
+  <DialogPrimitive.Description
+    ref={ref}
+    className={cn("text-xs text-[var(--color-muted)]", className)}
+    {...props}
+  />
+))
+
+export const Select = SelectPrimitive.Root
+export const SelectGroup = SelectPrimitive.Group
+export const SelectValue = SelectPrimitive.Value
+
+export const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) => (
+  <SelectPrimitive.Trigger
+    ref={ref}
+    className={cn(
+      "flex h-10 w-full items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 cursor-pointer transition-all",
+      className
+    )}
+    {...props}
+  >
+    {children}
+    <SelectPrimitive.Icon asChild>
+      <ChevronDown className="h-4 w-4 text-[var(--color-muted)] shrink-0 ml-2" />
+    </SelectPrimitive.Icon>
+  </SelectPrimitive.Trigger>
+))
+
+export const SelectContent = React.forwardRef(
+  ({ className, children, position = "popper", ...props }, ref) => (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        ref={ref}
+        className={cn(
+          "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          className
+        )}
+        position={position}
+        {...props}
+      >
+        <SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  )
+)
+
+export const SelectItem = React.forwardRef(({ className, children, ...props }, ref) => (
+  <SelectPrimitive.Item
+    ref={ref}
+    className={cn(
+      "relative flex w-full cursor-pointer select-none items-center rounded-lg py-2 px-3 text-sm text-[var(--color-text)] outline-none hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] focus:bg-[var(--color-primary-muted)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      className
+    )}
+    {...props}
+  >
+    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+  </SelectPrimitive.Item>
+))
+```
+
+---
+
+### 9. `frontend/src/components/Layout.jsx`
+- Refined editorial **ZOOM** brand header (replaces the wireframe border box).
+- Removes the duplicate Logout button from the header (kept cleanly in the sidebar footer).
+- Wires up the global top progress bar (`useLoadingBarStore`).
+- Translucent modern header bar + proper `aria-label`s.
+
+```jsx
+import { useEffect, useState } from "react"
+import { NavLink, useNavigate, useLocation } from "react-router-dom"
+import { useTheme } from "next-themes"
+import {
+  LayoutDashboard, UtensilsCrossed, Package, TableIcon,
+  CreditCard, Users, Truck, LogOut, Bell, Moon, Sun,
+  Menu as MenuIcon, ChefHat, ShoppingBag, Coffee, Clock, BarChart3, Volume2, X, Leaf,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { authContext } from "../context/authContext"
+import { useLoadingBarStore } from "../context/loadingBarContext"
+import {
+  useStaffNotifications,
+  unlockAudioOnFirstInteraction,
+  isAudioUnlocked,
+  unlockAudioNow,
+} from "../hooks/useStaffNotifications"
+import { useLang } from "@/i18n/LanguageContext"
+import LanguageSwitcher from "@/components/LanguageSwitcher"
+
+const navByRole = {
+  admin: {
+    main: [
+      { to: "/admin", icon: LayoutDashboard, label: "nav.dashboard" },
+      { to: "/admin/menu", icon: UtensilsCrossed, label: "nav.menu" },
+      { to: "/admin/stock", icon: Package, label: "nav.stockMgmt" },
+      { to: "/admin/tables", icon: TableIcon, label: "nav.tables" },
+      { to: "/admin/payments", icon: CreditCard, label: "nav.paymentsOnly" },
+      { to: "/admin/reports", icon: BarChart3, label: "nav.reports" },
+      { to: "/admin/history", icon: Clock, label: "nav.history" },
+    ],
+    secondary: [
+      { to: "/admin/suppliers", icon: Truck, label: "nav.suppliers" },
+      { to: "/admin/users", icon: Users, label: "nav.users" },
+    ],
+  },
+  cashier: {
+    main: [
+      { to: "/cashier/menu", icon: UtensilsCrossed, label: "nav.menu" },
+      { to: "/cashier/orders", icon: ShoppingBag, label: "nav.orders" },
+      { to: "/cashier/payments", icon: CreditCard, label: "nav.payments" },
+      { to: "/cashier/history", icon: Clock, label: "nav.history" },
+    ],
+    secondary: [],
+  },
+  kitchen: {
+    main: [
+      { to: "/kitchen/menu", icon: UtensilsCrossed, label: "nav.menu" },
+      { to: "/kitchen/orders", icon: ChefHat, label: "nav.kitchenOrder" },
+      { to: "/kitchen/stock", icon: Package, label: "nav.stock" },
+    ],
+    secondary: [],
+  },
+  barista: {
+    main: [
+      { to: "/barista/menu", icon: UtensilsCrossed, label: "nav.menu" },
+      { to: "/barista/orders", icon: Coffee, label: "nav.drinkOrders" },
+      { to: "/barista/stock", icon: Package, label: "nav.stock" },
+    ],
+    secondary: [],
+  },
+}
+
+const roleInfo = {
+  admin: {
+    label: "Administrator",
+    sub: "role.admin",
+    avatarBg: "bg-[var(--color-primary-muted)]",
+    avatarText: "text-[var(--color-primary)]",
+    dot: "bg-[var(--color-primary)]",
+  },
+  cashier: {
+    label: "Cashier Staff",
+    sub: "role.cashier",
+    avatarBg: "bg-[var(--color-primary-muted)]",
+    avatarText: "text-[var(--color-primary)]",
+    dot: "bg-[var(--color-success)]",
+  },
+  kitchen: {
+    label: "Kitchen Staff",
+    sub: "role.kitchen",
+    avatarBg: "bg-[var(--color-flame-muted)]",
+    avatarText: "text-[var(--color-flame)]",
+    dot: "bg-[var(--color-flame)]",
+  },
+  barista: {
+    label: "Barista Staff",
+    sub: "role.barista",
+    avatarBg: "bg-[var(--color-accent-muted)]",
+    avatarText: "text-[var(--color-warning)]",
+    dot: "bg-[var(--color-warning)]",
+  },
+}
+
+const exactEnds = ["/admin", "/cashier/menu", "/kitchen/menu", "/barista/menu"]
+
+export default function Layout({ children }) {
+  const { theme, setTheme } = useTheme()
+  const { t, lang } = useLang()
+  const { user, logout } = authContext()
+  const activeRequests = useLoadingBarStore((s) => s.activeCount)
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  const role = user?.role || "admin"
+  const info = roleInfo[role] || roleInfo.admin
+  const nav = navByRole[role] || navByRole.admin
+
+  const displayName = user?.fullName || user?.name || user?.username || info.label
+  const initials = displayName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2)
+
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { count: bellCount, bellRinging } = useStaffNotifications(role)
+
+  const bellDestination = {
+    admin: "/admin",
+    cashier: "/cashier/orders",
+    kitchen: "/kitchen/orders",
+    barista: "/barista/orders",
+  }
+
+  const needsSoundPrompt = ["cashier", "kitchen", "barista"].includes(role)
+
+  useEffect(() => {
+    if (needsSoundPrompt) unlockAudioOnFirstInteraction()
+  }, [needsSoundPrompt])
+
+  const [soundUnlocked, setSoundUnlocked] = useState(isAudioUnlocked())
+
+  useEffect(() => {
+    if (!needsSoundPrompt || soundUnlocked) return
+    const check = () => {
+      if (isAudioUnlocked()) setSoundUnlocked(true)
+    }
+    window.addEventListener("click", check)
+    window.addEventListener("touchstart", check)
+    return () => {
+      window.removeEventListener("click", check)
+      window.removeEventListener("touchstart", check)
+    }
+  }, [needsSoundPrompt, soundUnlocked])
+
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
+
+  const handleEnableSound = () => {
+    unlockAudioNow()
+    setSoundUnlocked(true)
+  }
+
+  const handleLogout = async () => {
+    await logout()
+  }
+
+  const allNavItems = [...(nav.main || []), ...(nav.secondary || [])]
+  const activeNav =
+    allNavItems.find((item) =>
+      exactEnds.includes(item.to)
+        ? location.pathname === item.to
+        : location.pathname === item.to || location.pathname.startsWith(item.to + "/")
+    ) || allNavItems[0]
+
+  return (
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-[var(--color-background)]">
+      {/* Global top request progress bar */}
+      {activeRequests > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-0.5 bg-[var(--color-primary-muted)] overflow-hidden pointer-events-none">
+          <div className="h-full w-1/2 bg-[var(--color-primary)] animate-loading-bar" />
+        </div>
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 w-64 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col transition-transform duration-200 ease-out shadow-xl lg:shadow-none",
+          "lg:static lg:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        {/* Brand Wordmark */}
+        <div className="px-5 pt-5 pb-4 border-b border-[var(--color-border)]/70 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-primary)] text-white flex items-center justify-center shadow-xs shrink-0">
+              <Leaf size={18} className="rotate-12" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-display font-bold text-xl tracking-wide text-[var(--color-text)] leading-none">
+                ZOOM
+              </div>
+              <div className="text-[11px] font-medium text-[var(--color-muted)] mt-1 truncate">
+                Garden Café &amp; Wine · Sen Sok
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation"
+            className="lg:hidden p-1.5 rounded-lg text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+          <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+            {t(info.sub)}
+          </div>
+
+          {nav.main.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={exactEnds.includes(to)}
+              className={({ isActive }) =>
+                cn(
+                  "group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+                  isActive
+                    ? "bg-[var(--color-primary)] text-white shadow-xs"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text)]"
+                )
+              }
+            >
+              <Icon size={17} className="shrink-0 opacity-90" />
+              <span className="truncate">{t(label)}</span>
+            </NavLink>
+          ))}
+
+          {nav.secondary?.length > 0 && (
+            <>
+              <div className="pt-4 pb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+                {lang === "km" ? "ការគ្រប់គ្រង" : "Administration"}
+              </div>
+              {nav.secondary.map(({ to, icon: Icon, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    cn(
+                      "group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+                      isActive
+                        ? "bg-[var(--color-primary)] text-white shadow-xs"
+                        : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text)]"
+                    )
+                  }
+                >
+                  <Icon size={17} className="shrink-0 opacity-90" />
+                  <span className="truncate">{t(label)}</span>
+                </NavLink>
+              ))}
+            </>
+          )}
+        </nav>
+
+        {/* User Footer Card (Single clean logout action) */}
+        <div className="p-3 border-t border-[var(--color-border)]/80 shrink-0">
+          <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-[var(--color-surface-subtle)]/70 border border-[var(--color-border)]/70">
+            <div
+              className={cn(
+                "w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                info.avatarBg,
+                info.avatarText
+              )}
+            >
+              {initials}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-[var(--color-text)] truncate">
+                {displayName}
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted)] mt-0.5">
+                <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", info.dot)} />
+                <span className="truncate">{t(info.sub)}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title={t("common.logout")}
+              aria-label={t("common.logout")}
+              className="p-2 rounded-lg text-[var(--color-muted)] hover:bg-[var(--color-danger-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer shrink-0"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile Backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px] lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main Content Column */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Clean Translucent Top Header */}
+        <header className="h-14 shrink-0 border-b border-[var(--color-border)]/80 bg-[var(--color-surface)]/85 backdrop-blur-md flex items-center justify-between px-4 lg:px-6 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((v) => !v)}
+              aria-label="Open navigation"
+              className="lg:hidden p-2 rounded-xl hover:bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)] cursor-pointer"
+            >
+              <MenuIcon size={18} />
+            </button>
+
+            <div className="flex items-center gap-2 text-xs text-[var(--color-muted)] min-w-0">
+              <span className="hidden sm:inline font-medium">ZOOM</span>
+              <span className="hidden sm:inline text-[var(--color-border-strong)]">/</span>
+              <span className="text-sm font-semibold text-[var(--color-text)] truncate">
+                {activeNav ? t(activeNav.label) : "Workspace"}
+              </span>
+            </div>
+          </div>
+
+          {/* Unified Icon Toolbar */}
+          <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/70 p-1">
+            <LanguageSwitcher langs={["en", "km"]} />
+
+            {needsSoundPrompt && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => navigate(bellDestination[role] || "/")}
+                  aria-label="Notifications"
+                  title={
+                    bellCount > 0
+                      ? `${bellCount} order(s) need attention`
+                      : "No pending notifications"
+                  }
+                  className={cn(
+                    "relative p-2 rounded-lg transition-all cursor-pointer",
+                    bellRinging
+                      ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                      : "hover:bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                  )}
+                >
+                  <Bell
+                    size={16}
+                    className={cn(
+                      bellRinging && "animate-bounce",
+                      bellCount > 0 && "text-[var(--color-warning)]"
+                    )}
+                  />
+                  {bellCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-danger)] text-white text-[10px] font-bold flex items-center justify-center">
+                      {bellCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={unlockAudioNow}
+                  aria-label="Test alert sound"
+                  title="Test alert sound"
+                  className="p-2 rounded-lg hover:bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                >
+                  <Volume2 size={16} />
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label="Toggle color theme"
+              title="Toggle theme"
+              className="p-2 rounded-lg hover:bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+            >
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+          </div>
+        </header>
+
+        {needsSoundPrompt && !soundUnlocked && (
+          <button
+            type="button"
+            onClick={handleEnableSound}
+            className="w-full flex items-center justify-center gap-2 bg-[var(--color-accent-muted)] border-b border-[var(--color-warning)]/20 text-[var(--color-warning)] text-xs font-semibold py-2 px-4 transition-colors cursor-pointer"
+          >
+            <Bell size={13} />
+            {lang === "km"
+              ? "ចុចទីនេះដើម្បីបើកសំឡេងជូនដំណឹងការកុម្ម៉ង់"
+              : "Tap to enable live order alert sounds"}
+          </button>
+        )}
+
+        <main className="flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
+          <div className="max-w-7xl mx-auto">{children}</div>
+        </main>
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+### 10. `frontend/src/pages/Login.jsx`
+- Replaces the fragile manual `•` string-masking hack with a proper accessible `<form>` + `type="password"` (paste, selection edit, mobile keyboards, and Khmer IME all work reliably).
+- Keeps username filled if password is wrong.
+- Refined hospitality visual design matching **ZOOM — Garden Café & Wine**.
+
+```jsx
+import { useState } from "react"
+import { useLang } from "@/i18n/LanguageContext"
+import { Eye, EyeOff, LogIn, Leaf, AlertCircle, UtensilsCrossed } from "lucide-react"
+import { cn } from "@/lib/utils"
+import LanguageSwitcher from "@/components/LanguageSwitcher"
+import { authContext } from "../context/authContext"
+import { usePageTitle } from "../hooks/usePageTitle"
+
+export default function Login() {
+  usePageTitle("Sign In")
+  const { t } = useLang()
+  const { login, isLoading, error: storeError } = authContext()
+
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [showPass, setShowPass] = useState(false)
+  const [error, setError] = useState("")
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setError("")
+
+    const cleanUser = username.trim()
+    if (!cleanUser || !password) {
+      setError(t("login.enterBoth"))
+      return
+    }
+
+    try {
+      await login({ username: cleanUser, password })
+      setPassword("")
+    } catch (err) {
+      setPassword("")
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        t("login.invalid")
+      setError(msg)
+    }
+  }
+
+  const displayError = error || storeError
+
+  return (
+    <div className="min-h-screen w-full flex bg-[var(--color-background)] antialiased">
+      {/* Left Botanical Brand Showcase */}
+      <div className="hidden lg:flex lg:w-[46%] bg-[#14362B] relative overflow-hidden flex-col justify-between p-14 text-white">
+        {/* Soft botanical ambient glow */}
+        <div className="absolute -top-28 -right-24 w-[460px] h-[460px] rounded-full bg-[#2d6a56]/35 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -left-24 w-[420px] h-[420px] rounded-full bg-[#7c2d42]/25 blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/15 backdrop-blur-md flex items-center justify-center">
+            <Leaf size={18} className="text-[#86efac] rotate-12" />
+          </div>
+          <div>
+            <div className="font-display font-bold text-lg tracking-wider leading-none">
+              ZOOM
+            </div>
+            <div className="text-[11px] text-white/60 tracking-wide mt-0.5">
+              Sen Sok · Phnom Penh
+            </div>
+          </div>
+        </div>
+
+        <div className="relative z-10 max-w-md my-auto space-y-8">
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-xs font-medium text-white/90">
+              <UtensilsCrossed size={12} className="text-[#86efac]" />
+              Garden Café &amp; Wine
+            </div>
+
+            <h2 className="font-display text-4xl font-bold leading-tight tracking-tight text-white">
+              {t("login.welcomeBack")}
+            </h2>
+
+            <p className="text-sm text-white/75 leading-relaxed">
+              {t("login.welcomeSub")}
+            </p>
+          </div>
+
+          <div className="h-px bg-gradient-to-r from-white/20 via-white/10 to-transparent" />
+
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { value: "11", label: t("login.tables") },
+              { value: "4", label: t("login.roles") },
+              { value: "100+", label: t("login.menuItems") },
+            ].map(({ value, label }) => (
+              <div
+                key={label}
+                className="bg-white/[0.06] border border-white/10 rounded-2xl p-4 backdrop-blur-sm"
+              >
+                <div className="font-display text-2xl font-bold text-white">
+                  {value}
+                </div>
+                <div className="text-[11px] uppercase tracking-wider text-white/60 mt-1">
+                  {label}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="relative z-10 text-xs text-white/45">
+          © {new Date().getFullYear()} ZOOM Garden Café &amp; Wine — RMS
+        </div>
+      </div>
+
+      {/* Right Sign-In Surface */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 relative">
+        <div className="absolute top-5 right-5">
+          <LanguageSwitcher langs={["en", "km"]} />
+        </div>
+
+        <div className="w-full max-w-[400px]">
+          {/* Mobile Brand Header */}
+          <div className="lg:hidden mb-8 flex flex-col items-center text-center">
+            <div className="w-12 h-12 rounded-2xl bg-[var(--color-primary)] text-white flex items-center justify-center shadow-sm mb-3">
+              <Leaf size={22} className="rotate-12" />
+            </div>
+            <div className="font-display font-bold text-3xl text-[var(--color-text)] tracking-wide leading-none">
+              ZOOM
+            </div>
+            <div className="text-xs text-[var(--color-muted)] mt-1">
+              Garden Café &amp; Wine · Sen Sok
+            </div>
+          </div>
+
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-3xl p-7 sm:p-8 shadow-sm">
+            <div className="mb-6">
+              <h1 className="font-display text-2xl font-bold text-[var(--color-text)]">
+                {t("login.signIn")}
+              </h1>
+              <p className="text-sm text-[var(--color-muted)] mt-1">
+                {t("login.formSubtitle")}
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="login-username"
+                  className="block text-xs font-semibold tracking-wide text-[var(--color-text-secondary)]"
+                >
+                  {t("login.username")}
+                </label>
+                <input
+                  id="login-username"
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value)
+                    setError("")
+                  }}
+                  placeholder="e.g. admin_zoom"
+                  className="w-full h-11 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/50 text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)] transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="login-password"
+                  className="block text-xs font-semibold tracking-wide text-[var(--color-text-secondary)]"
+                >
+                  {t("login.password")}
+                </label>
+                <div className="relative">
+                  <input
+                    id="login-password"
+                    type={showPass ? "text" : "password"}
+                    name="password"
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      setError("")
+                    }}
+                    placeholder="••••••••"
+                    className="w-full h-11 px-3.5 pr-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/50 text-[var(--color-text)] text-sm placeholder:text-[var(--color-muted)]/60 focus:outline-none focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)] transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass((v) => !v)}
+                    aria-label={showPass ? "Hide password" : "Show password"}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors p-1 rounded-lg cursor-pointer"
+                  >
+                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              {displayError && (
+                <div
+                  role="alert"
+                  className="bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 text-[var(--color-danger)] text-xs font-medium px-3.5 py-2.5 rounded-xl flex items-center gap-2"
+                >
+                  <AlertCircle size={15} className="shrink-0" />
+                  <span>{displayError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className={cn(
+                  "w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all mt-2 shadow-xs cursor-pointer",
+                  isLoading
+                    ? "bg-[var(--color-primary)]/60 text-white/85 cursor-not-allowed"
+                    : "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] active:scale-[0.99]"
+                )}
+              >
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <LogIn size={16} />
+                    <span>{t("login.signInToSystem")}</span>
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+### 11. `frontend/src/App.jsx`
+Adds **`React.lazy` + `<Suspense>` code splitting** so mobile guests only download the lightweight Guest bundle (instead of Admin, Reports, Stock, and `jsbarcode`), plus a refined branded splash screen.
+
+```jsx
+import { lazy, Suspense, useEffect, useState } from "react"
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom"
+import { ThemeProvider } from "next-themes"
+import { Leaf } from "lucide-react"
+import { authContext } from "./context/authContext"
+import Layout from "./components/Layout"
+
+const Login = lazy(() => import("./pages/Login"))
+
+const Dashboard = lazy(() => import("./pages/admin/Dashboard"))
+const Menu = lazy(() => import("./pages/admin/Menu"))
+const Stock = lazy(() => import("./pages/admin/Stock"))
+const Tables = lazy(() => import("./pages/admin/Tables"))
+const Payments = lazy(() => import("./pages/admin/Payments"))
+const Reports = lazy(() => import("./pages/admin/Reports"))
+const Suppliers = lazy(() => import("./pages/admin/Suppliers"))
+const UserManagement = lazy(() => import("./pages/admin/UserManagement"))
+const OrderHistory = lazy(() => import("./pages/admin/OrderHistory"))
+
+const CashierMenu = lazy(() => import("./pages/cashier/CashierMenu"))
+const CashierOrders = lazy(() => import("./pages/cashier/CashierOrders"))
+const CashierPaymentsReport = lazy(() => import("./pages/cashier/PaymentsReport"))
+const CashierHistory = lazy(() => import("./pages/cashier/CashierHistory"))
+
+const BaristaMenu = lazy(() => import("./pages/barista/BaristaMenu"))
+const BaristaOrders = lazy(() => import("./pages/barista/BaristaOrders"))
+const BaristaStock = lazy(() => import("./pages/barista/BaristaStock"))
+
+const KitchenMenu = lazy(() => import("./pages/kitchen/KitchenMenu"))
+const KitchenOrders = lazy(() => import("./pages/kitchen/KitchenOrders"))
+const KitchenStock = lazy(() => import("./pages/kitchen/KitchenStock"))
+
+const GuestLanding = lazy(() => import("./pages/guest/GuestLanding"))
+const GuestOrder = lazy(() => import("./pages/guest/GuestOrder"))
+const GuestOrderStatus = lazy(() => import("./pages/guest/GuestOrderStatus"))
+
+const roleHome = {
+  admin: "/admin",
+  cashier: "/cashier/menu",
+  kitchen: "/kitchen/menu",
+  barista: "/barista/menu",
+}
+
+function PageFallback({ fullScreen = false }) {
+  return (
+    <div
+      className={
+        fullScreen
+          ? "h-dvh w-screen flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]"
+          : "min-h-[40vh] w-full flex flex-col items-center justify-center gap-3"
+      }
+    >
+      <div className="flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-xl bg-[var(--color-primary)] text-white flex items-center justify-center shadow-xs">
+          <Leaf size={17} className="rotate-12" />
+        </div>
+        <div>
+          <div className="font-display font-bold text-xl text-[var(--color-text)] leading-none">
+            ZOOM
+          </div>
+          <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+            Garden Café &amp; Wine
+          </div>
+        </div>
+      </div>
+      <div className="w-5 h-5 border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] rounded-full animate-spin" />
+    </div>
+  )
+}
+
+function isAllowed(role, pathname) {
+  const prefixMap = {
+    admin: "/admin",
+    cashier: "/cashier",
+    kitchen: "/kitchen",
+    barista: "/barista",
+  }
+  const prefix = prefixMap[role]
+  if (!prefix) return false
+  return pathname === prefix || pathname.startsWith(prefix + "/")
+}
+
+function RoleRedirector() {
+  const { user } = authContext()
+  const role = user?.role
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (!role) return
+    if (!isAllowed(role, location.pathname)) {
+      navigate(roleHome[role] || "/admin", { replace: true })
+    }
+  }, [role, location.pathname, navigate])
+
+  return null
+}
+
+function ProtectedRoute({ role, allowedRoles, children }) {
+  if (!allowedRoles.includes(role)) {
+    return <Navigate to={roleHome[role] || "/admin"} replace />
+  }
+  return children
+}
+
+function StaffApp() {
+  const { user, checkAuth } = authContext()
+  const [initializing, setInitializing] = useState(true)
+
+  useEffect(() => {
+    Promise.resolve(checkAuth()).finally(() => setInitializing(false))
+  }, [checkAuth])
+
+  if (initializing) {
+    return <PageFallback fullScreen />
+  }
+
+  if (!user) {
+    return (
+      <Suspense fallback={<PageFallback fullScreen />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Suspense>
+    )
+  }
+
+  const role = user.role || "admin"
+
+  return (
+    <Layout>
+      <RoleRedirector />
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/login" element={<Navigate to={roleHome[role] || "/admin"} replace />} />
+
+          {/* Admin */}
+          <Route path="/admin" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Dashboard /></ProtectedRoute>} />
+          <Route path="/admin/menu" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Menu /></ProtectedRoute>} />
+          <Route path="/admin/menus" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Menu /></ProtectedRoute>} />
+          <Route path="/admin/stock" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Stock /></ProtectedRoute>} />
+          <Route path="/admin/tables" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Tables /></ProtectedRoute>} />
+          <Route path="/admin/payments" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Payments /></ProtectedRoute>} />
+          <Route path="/admin/reports" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Reports /></ProtectedRoute>} />
+          <Route path="/admin/suppliers" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><Suppliers /></ProtectedRoute>} />
+          <Route path="/admin/users" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><UserManagement /></ProtectedRoute>} />
+          <Route path="/admin/history" element={<ProtectedRoute role={role} allowedRoles={["admin"]}><OrderHistory /></ProtectedRoute>} />
+
+          {/* Cashier */}
+          <Route path="/cashier/menu" element={<ProtectedRoute role={role} allowedRoles={["cashier"]}><CashierMenu /></ProtectedRoute>} />
+          <Route path="/cashier/orders" element={<ProtectedRoute role={role} allowedRoles={["cashier"]}><CashierOrders /></ProtectedRoute>} />
+          <Route path="/cashier/payments" element={<ProtectedRoute role={role} allowedRoles={["cashier"]}><CashierPaymentsReport /></ProtectedRoute>} />
+          <Route path="/cashier/history" element={<ProtectedRoute role={role} allowedRoles={["cashier"]}><CashierHistory /></ProtectedRoute>} />
+
+          {/* Kitchen */}
+          <Route path="/kitchen/menu" element={<ProtectedRoute role={role} allowedRoles={["kitchen"]}><KitchenMenu /></ProtectedRoute>} />
+          <Route path="/kitchen/orders" element={<ProtectedRoute role={role} allowedRoles={["kitchen"]}><KitchenOrders /></ProtectedRoute>} />
+          <Route path="/kitchen/stock" element={<ProtectedRoute role={role} allowedRoles={["kitchen"]}><KitchenStock /></ProtectedRoute>} />
+
+          {/* Barista */}
+          <Route path="/barista/menu" element={<ProtectedRoute role={role} allowedRoles={["barista"]}><BaristaMenu /></ProtectedRoute>} />
+          <Route path="/barista/orders" element={<ProtectedRoute role={role} allowedRoles={["barista"]}><BaristaOrders /></ProtectedRoute>} />
+          <Route path="/barista/stock" element={<ProtectedRoute role={role} allowedRoles={["barista"]}><BaristaStock /></ProtectedRoute>} />
+
+          <Route path="*" element={<Navigate to={roleHome[role] || "/admin"} replace />} />
+        </Routes>
+      </Suspense>
+    </Layout>
+  )
+}
+
+export default function App() {
+  return (
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+      <BrowserRouter>
+        <Suspense fallback={<PageFallback fullScreen />}>
+          <Routes>
+            <Route path="/" element={<GuestLanding />} />
+            <Route path="/order" element={<GuestOrder />} />
+            <Route path="/order/status" element={<GuestOrderStatus />} />
+            <Route path="/*" element={<StaffApp />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </ThemeProvider>
+  )
+}
+```
+
+---
+
+Apply **Phase 1** and check the new look across your sidebar, login, dark mode, and typography—then reply **"Phase 2"** whenever you're ready for the **Guest QR Menu, Scanner & Order Tracking** overhaul (or tell me if you want to tweak any colors/fonts first!).

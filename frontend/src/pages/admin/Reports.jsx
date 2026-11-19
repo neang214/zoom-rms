@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { BarChart3, UtensilsCrossed, Package, CreditCard } from "lucide-react"
 import { useOrderStore } from "../../context/orderContext"
@@ -8,8 +8,9 @@ import { useStockStore } from "../../context/stockContext"
 import { useStockOrderStore } from "../../context/stockOrderContext"
 import { usePaymentStore } from "../../context/paymentContext"
 import { usePageTitle } from "../../hooks/usePageTitle"
-import { ReportBuilder, PaymentsTable, toLocalDateStr } from "@/components/admin/PaymentsParts"
+import { ReportBuilder, PaymentsTable } from "@/components/admin/PaymentsParts"
 import { MenuReportBuilder, StockReportBuilder } from "@/components/admin/ReportsParts"
+import { toLocalDateStr } from "@/lib/currency"
 import { useLang } from "@/i18n/LanguageContext"
 import { useSocketRole, useSocketEvent } from "../../services/socket"
 import { cn } from "@/lib/utils"
@@ -43,58 +44,78 @@ export default function Reports() {
   const [customFrom, setCustomFrom] = useState(todayStr)
   const [customTo, setCustomTo] = useState(todayStr)
 
-  const refresh = useCallback(() => {
-    fetchOrders().catch(() => {})
-    fetchItems().catch(() => {})
-    fetchArchivedItems().catch(() => {})
-    fetchCategories().catch(() => {})
-    fetchStock().catch(() => {})
-    fetchStockOrders().catch(() => {})
-    fetchPayments().catch(() => {})
-  }, [fetchOrders, fetchItems, fetchArchivedItems, fetchCategories, fetchStock, fetchStockOrders, fetchPayments])
+  const socketTimerRef = useRef(null)
+
+  const refreshActiveTab = useCallback(
+    (tab = activeTab) => {
+      if (tab === "sales") {
+        fetchOrders().catch(() => {})
+      } else if (tab === "menu") {
+        fetchOrders().catch(() => {})
+        fetchItems().catch(() => {})
+        fetchArchivedItems().catch(() => {})
+        fetchCategories().catch(() => {})
+      } else if (tab === "stock") {
+        fetchStock().catch(() => {})
+        fetchStockOrders().catch(() => {})
+      } else if (tab === "payments") {
+        fetchPayments().catch(() => {})
+        fetchOrders().catch(() => {})
+      }
+    },
+    [
+      activeTab,
+      fetchOrders,
+      fetchItems,
+      fetchArchivedItems,
+      fetchCategories,
+      fetchStock,
+      fetchStockOrders,
+      fetchPayments,
+    ]
+  )
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    refreshActiveTab(activeTab)
+  }, [activeTab, refreshActiveTab])
+
+  useEffect(
+    () => () => {
+      if (socketTimerRef.current) clearTimeout(socketTimerRef.current)
+    },
+    []
+  )
+
+  // Only debounce-refresh order/payment-dependent tabs on order/payment events
+  const scheduleOrderTabRefresh = useCallback(() => {
+    if (activeTab === "stock") return
+    if (socketTimerRef.current) clearTimeout(socketTimerRef.current)
+    socketTimerRef.current = setTimeout(() => {
+      socketTimerRef.current = null
+      refreshActiveTab(activeTab)
+    }, 400)
+  }, [activeTab, refreshActiveTab])
 
   useSocketRole("admin")
-  useSocketEvent("payment:completed", refresh)
-  useSocketEvent("order:new", refresh)
-  useSocketEvent("order:status_changed", refresh)
+  useSocketEvent("payment:completed", scheduleOrderTabRefresh)
+  useSocketEvent("order:new", scheduleOrderTabRefresh)
+  useSocketEvent("order:status_changed", scheduleOrderTabRefresh)
 
   const handleTabChange = (tab) => {
-    if (tab === "sales") {
-      setSearchParams({}, { replace: true })
-    } else {
-      setSearchParams({ tab }, { replace: true })
-    }
+    if (tab === "sales") setSearchParams({}, { replace: true })
+    else setSearchParams({ tab }, { replace: true })
   }
 
   const tabs = [
-    {
-      id: "sales",
-      label: t("reports.salesTab"),
-      icon: BarChart3,
-      count: orders.length,
-    },
+    { id: "sales", label: t("reports.salesTab"), icon: BarChart3, count: orders.length },
     {
       id: "menu",
       label: t("reports.menuTab"),
       icon: UtensilsCrossed,
       count: (menuItems?.length || 0) + (archivedMenuItems?.length || 0),
     },
-    {
-      id: "stock",
-      label: t("reports.stockTab"),
-      icon: Package,
-      count: stockItems.length,
-    },
-    {
-      id: "payments",
-      label: t("reports.paymentsTab"),
-      icon: CreditCard,
-      count: payments.length,
-    },
+    { id: "stock", label: t("reports.stockTab"), icon: Package, count: stockItems.length },
+    { id: "payments", label: t("reports.paymentsTab"), icon: CreditCard, count: payments.length },
   ]
 
   const subtitleByTab = {
@@ -106,16 +127,17 @@ export default function Reports() {
 
   return (
     <div className="space-y-5">
-      {/* Header + Unified Report Tab Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">{t("report.title")}</h1>
-          <p className="text-sm text-[var(--color-muted)] mt-0.5">
+          <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">
+            {t("report.title")}
+          </h1>
+          <p className="text-xs sm:text-sm text-[var(--color-muted)] mt-0.5">
             {subtitleByTab[activeTab] || t("reports.filterSales")}
           </p>
         </div>
 
-        <div className="inline-flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xs w-fit">
+        <div className="inline-flex flex-wrap items-center gap-1 p-1 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xs w-fit">
           {tabs.map(({ id, label, icon: Icon, count }) => {
             const isActive = activeTab === id
             return (
@@ -124,31 +146,32 @@ export default function Reports() {
                 type="button"
                 onClick={() => handleTabChange(id)}
                 className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
+                  "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
                   isActive
-                    ? "bg-[var(--color-primary)] text-white shadow-sm"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+                    ? "bg-[var(--color-primary)] text-white shadow-2xs"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
                 )}
               >
                 <Icon size={15} />
                 <span>{label}</span>
-                <span
-                  className={cn(
-                    "text-[11px] px-2 py-0.5 rounded-full font-bold",
-                    isActive
-                      ? "bg-white/20 text-white"
-                      : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
-                  )}
-                >
-                  {count}
-                </span>
+                {count > 0 && (
+                  <span
+                    className={cn(
+                      "text-[11px] px-1.5 py-0.5 rounded-full font-bold tabular-nums",
+                      isActive
+                        ? "bg-white/20 text-white"
+                        : "bg-[var(--color-surface-subtle)] text-[var(--color-text)]"
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
             )
           })}
         </div>
       </div>
 
-      {/* Tab Content */}
       {activeTab === "sales" && (
         <ReportBuilder
           activePeriod={activePeriod}
@@ -182,11 +205,7 @@ export default function Reports() {
       )}
 
       {activeTab === "payments" && (
-        <PaymentsTable
-          payments={payments}
-          orders={orders}
-          isLoading={paymentsLoading}
-        />
+        <PaymentsTable payments={payments} orders={orders} isLoading={paymentsLoading} />
       )}
     </div>
   )

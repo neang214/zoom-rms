@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { useSocketRole, useSocketEvent } from "../services/socket"
 import { useOrderItemStore } from "../context/orderItemContext"
 
@@ -10,7 +10,6 @@ const recentOrderRingMap = new Map()
 
 function shouldRingForOrder(orderId, eventGroup = "new") {
   const now = Date.now()
-  // Clean up expired entries
   for (const [k, ts] of recentOrderRingMap.entries()) {
     if (now - ts > ORDER_BATCH_WINDOW_MS) {
       recentOrderRingMap.delete(k)
@@ -19,7 +18,6 @@ function shouldRingForOrder(orderId, eventGroup = "new") {
   if (!orderId) return true
   const key = `${eventGroup}:${orderId}`
   const prev = recentOrderRingMap.get(key)
-  // Always refresh the rolling window timestamp so sequential items in the same order stay grouped
   recentOrderRingMap.set(key, now)
   if (prev && now - prev < ORDER_BATCH_WINDOW_MS) {
     return false
@@ -102,7 +100,6 @@ export function unlockAudioOnFirstInteraction() {
       const ctx = getAudioContext()
       if (ctx) {
         if (ctx.state === "suspended") ctx.resume()
-        // Silent buffer play is required to unlock audio on iOS WebKit & Android Chrome
         const buffer = ctx.createBuffer(1, 1, 22050)
         const source = ctx.createBufferSource()
         source.buffer = buffer
@@ -122,50 +119,71 @@ export function unlockAudioOnFirstInteraction() {
 export function useStaffNotifications(role) {
   const { connected } = useSocketRole(role)
   const [bellRinging, setBellRinging] = useState(false)
+  const bellTimerRef = useRef(null)
+  const refetchTimerRef = useRef(null)
 
-  const { kitchenQueue, baristaQueue, fetchKitchenQueue, fetchBaristaQueue } = useOrderItemStore()
+  const { kitchenQueue, baristaQueue, fetchKitchenQueue, fetchBaristaQueue } =
+    useOrderItemStore()
+
+  // Single debounced queue refresh shared by Layout bell + StationOrders
+  const scheduleQueueFetch = useCallback(() => {
+    if (role !== "kitchen" && role !== "barista") return
+    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    refetchTimerRef.current = setTimeout(() => {
+      refetchTimerRef.current = null
+      if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+      if (role === "barista") fetchBaristaQueue().catch(() => {})
+    }, 250)
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
+
+  useEffect(() => {
+    if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+    if (role === "barista") fetchBaristaQueue().catch(() => {})
+    return () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+      if (bellTimerRef.current) clearTimeout(bellTimerRef.current)
+    }
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
 
   const ring = useCallback(() => {
     setBellRinging(true)
     playAlertSound()
-    setTimeout(() => setBellRinging(false), 2000)
+    if (bellTimerRef.current) clearTimeout(bellTimerRef.current)
+    bellTimerRef.current = setTimeout(() => {
+      bellTimerRef.current = null
+      setBellRinging(false)
+    }, 2000)
   }, [])
 
-  const ringForOrder = useCallback((orderId, eventGroup = "new") => {
-    if (!shouldRingForOrder(orderId, eventGroup)) return
-    ring()
-  }, [ring])
+  const ringForOrder = useCallback(
+    (orderId, eventGroup = "new") => {
+      if (!shouldRingForOrder(orderId, eventGroup)) return
+      ring()
+    },
+    [ring]
+  )
 
   useSocketEvent("order:new", (order) => {
     const orderId = order?.order_id
     if (role === "cashier") {
       ringForOrder(orderId, "new")
     }
-    if (role === "kitchen") {
-      fetchKitchenQueue()
-      ringForOrder(orderId, "new")
-    }
-    if (role === "barista") {
-      fetchBaristaQueue()
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
       ringForOrder(orderId, "new")
     }
   })
 
   useSocketEvent("order:confirmed", (order) => {
     const orderId = order?.order_id
-    if (role === "kitchen") {
-      fetchKitchenQueue()
-      ringForOrder(orderId, "new")
-    }
-    if (role === "barista") {
-      fetchBaristaQueue()
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
       ringForOrder(orderId, "new")
     }
   })
 
   useSocketEvent("order:deleted", () => {
-    if (role === "kitchen") fetchKitchenQueue()
-    if (role === "barista") fetchBaristaQueue()
+    scheduleQueueFetch()
   })
 
   useSocketEvent("order_item:new", (item) => {
@@ -173,19 +191,26 @@ export function useStaffNotifications(role) {
     if (role === "cashier") {
       ringForOrder(orderId, "new")
     }
-    if (role === "kitchen") {
-      fetchKitchenQueue()
-      ringForOrder(orderId, "new")
-    }
-    if (role === "barista") {
-      fetchBaristaQueue()
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
       ringForOrder(orderId, "new")
     }
   })
 
+  useSocketEvent("order_item:updated", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:note_changed", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:deleted", () => {
+    scheduleQueueFetch()
+  })
+
   useSocketEvent("order_item:status_changed", (item) => {
-    if (role === "kitchen") fetchKitchenQueue()
-    if (role === "barista") fetchBaristaQueue()
+    scheduleQueueFetch()
     if (item?.status === "Ready" && role === "cashier") {
       const orderId = item?.order_id ?? item?.order?.order_id
       ringForOrder(orderId, "ready")
@@ -199,13 +224,13 @@ export function useStaffNotifications(role) {
   })
 
   let count = 0
-  if (role === "kitchen") count = kitchenQueue.filter(i => i.status === "Pending").length
-  if (role === "barista") count = baristaQueue.filter(i => i.status === "Pending").length
+  if (role === "kitchen") count = kitchenQueue.filter((i) => i.status === "Pending").length
+  if (role === "barista") count = baristaQueue.filter((i) => i.status === "Pending").length
 
   const refresh = useCallback(() => {
-    if (role === "kitchen") fetchKitchenQueue()
-    if (role === "barista") fetchBaristaQueue()
-  }, [role])
+    if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+    if (role === "barista") fetchBaristaQueue().catch(() => {})
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
 
   return { count, bellRinging, connected, refresh }
 }

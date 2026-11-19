@@ -15,16 +15,7 @@ import { toLocalDateStr, getDateRangeForPeriod, filterOrdersByRange } from "./Pa
 import { MenuItemImage, MenuItemSalesDialog } from "./MenuParts"
 import { StockImage, StockTypeBadge, stockStatus } from "./StockParts"
 import { printA4DocumentHtml } from "@/components/cashier/orderHelpers"
-
-const KHR_RATE = 4100
-
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-}
+import { KHR_RATE, escapeHtml, sanitizeCsvCell } from "@/lib/currency"
 
 function formatDateTimeShort(val) {
   if (!val) return "—"
@@ -68,7 +59,7 @@ function exportMenuCsv(rows, periodLabel) {
   ])
 
   const csvContent = [headers, ...csvRows]
-    .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .map((r) => r.map(sanitizeCsvCell).join(","))
     .join("\n")
 
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
@@ -263,7 +254,7 @@ function exportStockInventoryCsv(items, stockOrders, subView, periodLabel, t) {
     })
 
     const csvContent = [headers, ...rows]
-      .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+      .map((r) => r.map(sanitizeCsvCell).join(","))
       .join("\n")
 
     const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
@@ -297,7 +288,7 @@ function exportStockInventoryCsv(items, stockOrders, subView, periodLabel, t) {
   })
 
   const csvContent = [headers, ...rows]
-    .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .map((r) => r.map(sanitizeCsvCell).join(","))
     .join("\n")
 
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })

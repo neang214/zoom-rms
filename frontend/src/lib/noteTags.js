@@ -9,5 +9,5 @@ export const NOTE_TAGS = [
 
 export function isAllergyNote(note) {
   if (!note) return false
-  return /allerg/i.test(note)
+  return /allerg|អាលែកហ្ស៊ី/i.test(note)
 }

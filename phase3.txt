@@ -1,0 +1,3694 @@
+Here is **Phase 3: Cashier Split-Screen POS, Live Order Board, Receipt Scanner & Payment Checkout**.
+
+### What's improved in Phase 3
+- **True Split-Screen POS (`CashierMenu.jsx`, `SubmitOrderDialog.jsx`, `CashierMenuGrid.jsx`):**
+  - Desktop/tablet (`lg+`) gets a real 2-column POS workspace: **searchable menu + one-tap category pills** on the left, **sticky live order ticket** (table selector, occupied warning, guests, notes, qty steppers, USD/KHR totals, submit) on the right.
+  - Mobile/small tablets keep the fixed dark-mode-safe `CartBar` (with proper `pb-28` so cards are never covered) + modal checkout.
+  - Fixes silent ignoring of `party_size` / `note` on occupied tables, filters missing items to prevent `$NaN`, and uses `Promise.allSettled` so partial failures never duplicate items on retry.
+- **POS Order Card Board (`CashierOrders.jsx`, `ActiveOrdersTable.jsx`, `ViewOrderDialog.jsx`):**
+  - Replaces 3 stacked HTML tables with clean filterable POS order cards showing queue #, table, elapsed time, item preview, allergy highlights, USD/KHR total, and large touch-friendly **Pay / Print / Edit / Delete** actions.
+  - **Live-synced `activePayOrder`** (fixes stale totals when items change while Payment modal is open).
+  - **280ms debounced socket refresh** (turns a 6-event multi-item order burst into 1 API request).
+- **React 19-Safe `ReceiptScanner.jsx`:** Replaced the `async` callback ref with a proper `useEffect` + cancellation cleanup so the camera never leaks, plus `Escape` key support.
+- **Upgraded `PaymentDialog.jsx`:** Resets state cleanly per order, detects if the order total changed while a KHQR code is on screen (preventing wrong-amount scans), Escape + scroll lock, and cleaner bilingual labels.
+- **Reliable Print Cleanup (`orderHelpers.js`):** Reuses shared `@/lib/currency` helpers and cleans up print iframes via `onafterprint` (with 60s fallback) instead of a risky 3s hard timeout.
+
+---
+
+### 1. `frontend/src/components/cashier/orderHelpers.js`
+
+```js
+import JsBarcode from "jsbarcode"
+import { KHR_RATE, orderTotal, escapeHtml } from "@/lib/currency"
+
+export { KHR_RATE, orderTotal }
+
+export const statusConfig = {
+  Pending: {
+    labelKey: "status.pending",
+    color: "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)] border border-[var(--color-border)]",
+  },
+  Preparing: {
+    labelKey: "status.preparing",
+    color: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20",
+  },
+  Served: {
+    labelKey: "status.served",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
+  },
+  Paid: {
+    labelKey: "status.paid",
+    color: "bg-[var(--color-primary-muted)] text-[var(--color-primary)] border border-[var(--color-primary)]/20",
+  },
+}
+
+function generateBarcodeSvg(value) {
+  try {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    JsBarcode(svg, value, {
+      format: "CODE128",
+      width: 1.5,
+      height: 36,
+      displayValue: true,
+      fontSize: 11,
+      fontOptions: "bold",
+      margin: 2,
+      lineColor: "#000000",
+      background: "#ffffff",
+    })
+    return svg.outerHTML
+  } catch {
+    return `<div style="font-family:monospace;font-size:12px;font-weight:bold;letter-spacing:2px;">${escapeHtml(value)}</div>`
+  }
+}
+
+function scheduleIframePrint(iframe, beforePrint) {
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    try {
+      iframe.remove()
+    } catch {}
+  }
+
+  setTimeout(() => {
+    try {
+      beforePrint?.()
+      const win = iframe.contentWindow
+      if (!win) {
+        cleanup()
+        return
+      }
+      win.onafterprint = cleanup
+      win.focus()
+      win.print()
+      // Fallback cleanup for browsers that don't fire onafterprint reliably
+      setTimeout(cleanup, 60000)
+    } catch {
+      cleanup()
+    }
+  }, 150)
+}
+
+// ============================================================================
+// Shared 80mm POS Thermal CSS (For Cashier)
+// ============================================================================
+const THERMAL_80MM_CSS = `
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    width: 80mm;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #000000;
+    font-family: 'Plus Jakarta Sans', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .ticket {
+    width: 72mm;
+    margin: 0 auto;
+    padding: 3mm 1mm 5mm;
+  }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .bold { font-weight: 700; }
+  .brand-box {
+    border: 1.5px solid #000;
+    border-radius: 6px;
+    padding: 4px 10px;
+    display: inline-block;
+    margin-bottom: 4px;
+  }
+  .brand-title {
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    line-height: 1.1;
+  }
+  .brand-sub {
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .divider {
+    border-top: 1px dashed #000;
+    margin: 6px 0;
+  }
+  .divider-solid {
+    border-top: 1.5px solid #000;
+    margin: 6px 0;
+  }
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    margin: 2px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-bottom: 1px solid #000;
+    padding: 3px 0;
+    text-align: left;
+  }
+  td {
+    padding: 3.5px 0;
+    vertical-align: top;
+    font-size: 11px;
+  }
+  .item-km {
+    font-size: 10px;
+    color: #111;
+  }
+  .item-note {
+    font-size: 9.5px;
+    font-style: italic;
+  }
+  .total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 13px;
+    font-weight: 800;
+    margin: 3px 0;
+  }
+  .khr-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11.5px;
+    font-weight: 700;
+    margin: 2px 0;
+  }
+  .status-badge {
+    display: inline-block;
+    border: 1px solid #000;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .barcode-wrap {
+    margin-top: 8px;
+    text-align: center;
+  }
+  .barcode-wrap svg {
+    max-width: 68mm;
+    height: auto;
+  }
+`
+
+function printThermalReceiptHtml(title, bodyHtml) {
+  const existing = document.getElementById("zoom-thermal-print-iframe")
+  if (existing) existing.remove()
+
+  const iframe = document.createElement("iframe")
+  iframe.id = "zoom-thermal-print-iframe"
+  iframe.style.position = "fixed"
+  iframe.style.right = "0"
+  iframe.style.bottom = "0"
+  iframe.style.width = "80mm"
+  iframe.style.height = "0"
+  iframe.style.border = "0"
+  iframe.style.opacity = "0"
+  iframe.style.pointerEvents = "none"
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(title)}</title>
+        <style>${THERMAL_80MM_CSS}</style>
+        <style id="dynamic-page-size">
+          @page { size: 80mm 200mm; margin: 0mm; }
+        </style>
+      </head>
+      <body>
+        <div id="receipt-ticket" class="ticket">
+          ${bodyHtml}
+        </div>
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  scheduleIframePrint(iframe, () => {
+    const ticket = doc.getElementById("receipt-ticket")
+    if (ticket) {
+      const heightMm = Math.max(110, Math.ceil(ticket.offsetHeight * 0.2646) + 8)
+      const pageStyle = doc.getElementById("dynamic-page-size")
+      if (pageStyle) {
+        pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0mm; }`
+      }
+    }
+  })
+}
+
+export function printA4DocumentHtml(title, bodyHtml) {
+  const existing = document.getElementById("zoom-a4-print-iframe")
+  if (existing) existing.remove()
+
+  const iframe = document.createElement("iframe")
+  iframe.id = "zoom-a4-print-iframe"
+  iframe.style.position = "fixed"
+  iframe.style.right = "0"
+  iframe.style.bottom = "0"
+  iframe.style.width = "210mm"
+  iframe.style.height = "0"
+  iframe.style.border = "0"
+  iframe.style.opacity = "0"
+  iframe.style.pointerEvents = "none"
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(title)}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 14mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          body {
+            font-family: 'Plus Jakarta Sans', 'Kantumruy Pro', 'Khmer OS Siemreap', system-ui, -apple-system, sans-serif;
+            color: #141917;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 1.45;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #1b4d3e;
+            padding-bottom: 14px;
+            margin-bottom: 18px;
+          }
+          .brand-card {
+            border: 2px solid #1b4d3e;
+            border-radius: 10px;
+            padding: 6px 14px;
+            text-align: center;
+          }
+          .brand-name {
+            font-size: 22px;
+            font-weight: 900;
+            color: #1b4d3e;
+            letter-spacing: 2px;
+            line-height: 1;
+          }
+          .brand-sub {
+            font-size: 10px;
+            color: #434e49;
+            font-weight: 600;
+            margin-top: 3px;
+          }
+          .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 18px;
+          }
+          .kpi-box {
+            border: 1px solid #cdd3cb;
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: #f6f6f3;
+          }
+          .kpi-box.primary {
+            background: #ebf3ef;
+            border-color: #1b4d3e;
+          }
+          .kpi-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #6c7872;
+            font-weight: 700;
+          }
+          .kpi-val {
+            font-size: 18px;
+            font-weight: 800;
+            color: #141917;
+            margin-top: 3px;
+          }
+          .kpi-box.primary .kpi-val {
+            color: #1b4d3e;
+          }
+          .kpi-sub {
+            font-size: 10px;
+            color: #6c7872;
+            margin-top: 2px;
+          }
+          h3 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #141917;
+            margin: 16px 0 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th {
+            background: #1b4d3e;
+            color: #ffffff;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 7px 8px;
+            text-align: left;
+            border: 1px solid #13382d;
+          }
+          td {
+            padding: 6px 8px;
+            border: 1px solid #cdd3cb;
+            font-size: 11px;
+          }
+          tr:nth-child(even) td {
+            background: #f6f6f3;
+          }
+          tfoot td {
+            background: #ebf3ef !important;
+            font-weight: 800;
+            border-color: #1b4d3e;
+          }
+          .right { text-align: right; }
+          .center { text-align: center; }
+          .footer {
+            margin-top: 28px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #434e49;
+          }
+        </style>
+      </head>
+      <body>
+        ${bodyHtml}
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  scheduleIframePrint(iframe)
+}
+
+// ============================================================================
+// 1. Cashier: 80mm Customer Receipt (Bill / Tax Invoice)
+// ============================================================================
+export function printOrderReceipt(order) {
+  if (!order) return
+
+  const totalUSD = orderTotal(order)
+  const totalKHR = Math.round(totalUSD * KHR_RATE)
+  const orderCode = `ORD-${String(order.order_id).padStart(4, "0")}`
+  const isPaid = (order.is_paid ?? order.status === "Paid") || order.payments?.length > 0
+  const paymentMethod = order.payments?.[0]?.method?.method_name || (isPaid ? "Paid" : "Unpaid")
+  const dateStr = order.order_date
+    ? new Date(order.order_date).toLocaleString("en-GB")
+    : new Date().toLocaleString("en-GB")
+  const barcodeSvg = generateBarcodeSvg(orderCode)
+
+  const itemsHtml = (order.order_items || [])
+    .map((oi) => {
+      const enName = oi.menu_item?.item_name || `Item #${oi.menu_item_id}`
+      const kmName = oi.menu_item?.item_name_km
+      const unitPrice = Number(oi.unit_price || 0)
+      const lineTotal = unitPrice * Number(oi.quantity || 1)
+      return `
+        <tr>
+          <td style="padding-right:4px;">
+            <div class="bold">${escapeHtml(enName)}</div>
+            ${kmName ? `<div class="item-km">${escapeHtml(kmName)}</div>` : ""}
+            ${oi.note ? `<div class="item-note">* ${escapeHtml(oi.note)}</div>` : ""}
+          </td>
+          <td class="center" style="width:10mm;">${oi.quantity}</td>
+          <td class="right" style="width:14mm;">$${unitPrice.toFixed(2)}</td>
+          <td class="right bold" style="width:15mm;">$${lineTotal.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
+
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">Garden Café &amp; Wine</div>
+      </div>
+      <div style="font-size:9.5px;">St. 2011 (#85, St. 92), Krang Thnong, Sen Sok</div>
+      <div style="font-size:9.5px;">Phnom Penh · Tel: 010 770 686</div>
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <div class="meta-row">
+      <span>Receipt: <strong class="bold">${escapeHtml(orderCode)}</strong></span>
+      <span class="status-badge">${isPaid ? "PAID" : "BILL"}</span>
+    </div>
+    <div class="meta-row">
+      <span>Table: <strong class="bold">${escapeHtml(order.table?.table_number || "—")}</strong></span>
+      ${order.queue_number != null ? `<span>Queue: <strong class="bold">#${order.queue_number}</strong></span>` : `<span></span>`}
+    </div>
+    ${order.party_size != null
+      ? `<div class="meta-row"><span>Guests: ${order.party_size}</span><span></span></div>`
+      : ""
+    }
+    <div class="meta-row">
+      <span>Date: ${escapeHtml(dateStr)}</span>
+    </div>
+    ${order.user?.username
+      ? `<div class="meta-row"><span>Cashier: ${escapeHtml(order.user.username)}</span></div>`
+      : ""
+    }
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Item / មុខទំនិញ</th>
+          <th class="center" style="width:10mm;">Qty</th>
+          <th class="right" style="width:14mm;">Price</th>
+          <th class="right" style="width:15mm;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>TOTAL (USD)</span>
+      <span>$${totalUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>សរុបជាប្រាក់រៀល (KHR)</span>
+      <span>៛${totalKHR.toLocaleString()}</span>
+    </div>
+    <div class="meta-row" style="margin-top:4px;">
+      <span>Payment / ការទូទាត់:</span>
+      <span class="bold">${escapeHtml(paymentMethod)}</span>
+    </div>
+    <div class="meta-row">
+      <span>Exchange Rate:</span>
+      <span>$1 = ៛${KHR_RATE.toLocaleString()}</span>
+    </div>
+
+    ${order.note ? `<div class="divider"></div><div style="font-size:10px;">Note: ${escapeHtml(order.note)}</div>` : ""}
+
+    <div class="divider"></div>
+
+    <div class="barcode-wrap">
+      ${barcodeSvg}
+    </div>
+
+    <div class="center" style="margin-top:6px; font-size:9.5px;">
+      <div class="bold">សូមអរគុណ! Thank You &amp; See You Again!</div>
+      <div>Powered by ZOOM RMS</div>
+    </div>
+  `
+
+  printThermalReceiptHtml(`Receipt ${orderCode}`, html)
+}
+
+// ============================================================================
+// 2. Cashier: 80mm Daily Closing Slip (Z-Report)
+// ============================================================================
+export function printDailyReport({ date, displayDate, tableLabel, data }) {
+  if (!data) return
+  const orders = data.orders || []
+  const totalOrders = data.summary?.total_orders ?? orders.length
+  const paidOrdersCount =
+    data.summary?.paid_orders ?? orders.filter((o) => o.status === "Paid").length
+  const totalRevenueUSD = Number(
+    data.summary?.total_revenue ??
+      orders.filter((o) => o.status === "Paid").reduce((s, o) => s + orderTotal(o), 0)
+  )
+  const totalRevenueKHR = Math.round(totalRevenueUSD * KHR_RATE)
+
+  const methodMap = new Map()
+  for (const o of orders.filter((x) => x.status === "Paid")) {
+    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
+    const prev = methodMap.get(mName) || { count: 0, total: 0 }
+    prev.count += 1
+    prev.total += orderTotal(o)
+    methodMap.set(mName, prev)
+  }
+
+  const methodsHtml = Array.from(methodMap.entries())
+    .map(
+      ([name, info]) => `
+      <div class="meta-row">
+        <span>${escapeHtml(name)} (${info.count})</span>
+        <span class="bold">$${info.total.toFixed(2)}</span>
+      </div>
+    `
+    )
+    .join("")
+
+  const orderRowsHtml = orders
+    .map((o) => {
+      const t = orderTotal(o)
+      const time = new Date(o.order_date).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+      return `
+        <tr>
+          <td>#${String(o.order_id).padStart(4, "0")}</td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td class="center">${escapeHtml(time)}</td>
+          <td class="right bold">$${t.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
+
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">DAILY CLOSING SLIP (Z-REPORT)</div>
+      </div>
+      <div style="font-size:10px;" class="bold">${escapeHtml(displayDate || date)}</div>
+      ${tableLabel ? `<div style="font-size:10px;">Table: ${escapeHtml(tableLabel)}</div>` : ""}
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <div class="meta-row"><span>Total Orders:</span><span class="bold">${totalOrders}</span></div>
+    <div class="meta-row"><span>Paid Orders:</span><span class="bold">${paidOrdersCount}</span></div>
+    <div class="meta-row"><span>Unpaid / Open:</span><span class="bold">${totalOrders - paidOrdersCount}</span></div>
+
+    ${methodsHtml
+      ? `<div class="divider"></div>
+         <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+         ${methodsHtml}`
+      : ""
+    }
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row">
+      <span>REVENUE (USD)</span>
+      <span>$${totalRevenueUSD.toFixed(2)}</span>
+    </div>
+    <div class="khr-row">
+      <span>ចំណូលសរុប (KHR)</span>
+      <span>៛${totalRevenueKHR.toLocaleString()}</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th class="center">Tbl</th>
+          <th class="center">Time</th>
+          <th class="right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${orderRowsHtml}</tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+
+    <div style="margin-top:12px; font-size:10px;">
+      <div>Cashier Sign: _______________________</div>
+      <div style="margin-top:4px; font-size:9px;">Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+    </div>
+  `
+
+  printThermalReceiptHtml(`Daily Report - ${date}`, html)
+}
+
+// ============================================================================
+// 3. Cashier: 80mm Period Summary Slip
+// ============================================================================
+export function printThermalReport({
+  period = "Daily",
+  totalRevenue = 0,
+  paidOrders = [],
+  avgOrderValue = 0,
+  periodOrders = [],
+}) {
+  const revUSD = Number(totalRevenue || 0)
+  const revKHR = Math.round(revUSD * KHR_RATE)
+
+  const methodMap = new Map()
+  for (const o of paidOrders) {
+    const mName = o.payments?.[0]?.method?.method_name || "Cash / Other"
+    const prev = methodMap.get(mName) || { count: 0, total: 0 }
+    prev.count += 1
+    prev.total += orderTotal(o)
+    methodMap.set(mName, prev)
+  }
+
+  const methodsHtml = Array.from(methodMap.entries())
+    .map(
+      ([name, info]) => `
+      <div class="meta-row">
+        <span>${escapeHtml(name)} (${info.count})</span>
+        <span class="bold">$${info.total.toFixed(2)}</span>
+      </div>
+    `
+    )
+    .join("")
+
+  const orderRowsHtml = periodOrders
+    .slice(0, 60)
+    .map((o) => {
+      const t = orderTotal(o)
+      return `
+        <tr>
+          <td>#${String(o.order_id).padStart(4, "0")}</td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td class="center">${escapeHtml(o.status)}</td>
+          <td class="right bold">$${t.toFixed(2)}</td>
+        </tr>
+      `
+    })
+    .join("")
+
+  const html = `
+    <div class="center">
+      <div class="brand-box">
+        <div class="brand-title">ZOOM</div>
+        <div class="brand-sub">CASHIER SALES SLIP</div>
+      </div>
+      <div style="font-size:10px;" class="bold">${escapeHtml(period)}</div>
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <div class="meta-row"><span>Total Orders:</span><span class="bold">${periodOrders.length}</span></div>
+    <div class="meta-row"><span>Paid Orders:</span><span class="bold">${paidOrders.length}</span></div>
+    <div class="meta-row"><span>Avg Ticket:</span><span class="bold">$${Number(avgOrderValue || 0).toFixed(2)}</span></div>
+
+    ${methodsHtml
+      ? `<div class="divider"></div>
+         <div class="bold" style="font-size:10px; margin-bottom:2px;">BY PAYMENT METHOD:</div>
+         ${methodsHtml}`
+      : ""
+    }
+
+    <div class="divider-solid"></div>
+
+    <div class="total-row"><span>TOTAL (USD)</span><span>$${revUSD.toFixed(2)}</span></div>
+    <div class="khr-row"><span>សរុប (KHR)</span><span>៛${revKHR.toLocaleString()}</span></div>
+
+    <div class="divider"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th class="center">Tbl</th>
+          <th class="center">Status</th>
+          <th class="right">Total</th>
+        </tr>
+      </thead>
+      <tbody>${orderRowsHtml}</tbody>
+    </table>
+
+    <div class="divider-solid"></div>
+    <div class="center" style="font-size:9px; margin-top:4px;">
+      Printed: ${escapeHtml(new Date().toLocaleString("en-GB"))}
+    </div>
+  `
+
+  printThermalReceiptHtml(`Cashier Report - ${period}`, html)
+}
+
+// ============================================================================
+// 4. Admin: Full A4 Executive Sales Report
+// ============================================================================
+export function printExecutiveReport({
+  period = "Daily",
+  totalRevenue = 0,
+  paidOrders = [],
+  avgOrderValue = 0,
+  periodOrders = [],
+}) {
+  const revUSD = Number(totalRevenue || 0)
+  const revKHR = Math.round(revUSD * KHR_RATE)
+  const totalItems = paidOrders.reduce(
+    (sum, o) => sum + (o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0),
+    0
+  )
+
+  const orderRowsHtml = periodOrders
+    .map((o) => {
+      const t = orderTotal(o)
+      const itemsCount = o.order_items?.reduce((s, i) => s + i.quantity, 0) || 0
+      const method =
+        o.payments?.[0]?.method?.method_name || (o.status === "Paid" ? "Paid" : "Unpaid")
+      return `
+        <tr>
+          <td><strong>ORD-${String(o.order_id).padStart(4, "0")}</strong></td>
+          <td class="center">${escapeHtml(o.table?.table_number || "—")}</td>
+          <td>${escapeHtml(new Date(o.order_date).toLocaleString("en-GB"))}</td>
+          <td class="center">${itemsCount}</td>
+          <td>${escapeHtml(method)}</td>
+          <td class="center">${escapeHtml(o.status)}</td>
+          <td class="right"><strong>$${t.toFixed(2)}</strong></td>
+          <td class="right">៛${Math.round(t * KHR_RATE).toLocaleString()}</td>
+        </tr>
+      `
+    })
+    .join("")
+
+  const html = `
+    <div class="header">
+      <div class="brand-card">
+        <div class="brand-name">ZOOM</div>
+        <div class="brand-sub">Garden Café &amp; Wine · Sen Sok</div>
+      </div>
+      <div class="right">
+        <div style="font-size:18px; font-weight:800; color:#141917;">EXECUTIVE SALES REPORT</div>
+        <div style="font-size:12px; color:#1b4d3e; font-weight:700; margin-top:2px;">Period: ${escapeHtml(period)}</div>
+        <div style="font-size:10px; color:#6c7872; margin-top:2px;">Generated: ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-box primary">
+        <div class="kpi-label">Total Revenue (USD)</div>
+        <div class="kpi-val">$${revUSD.toFixed(2)}</div>
+        <div class="kpi-sub">៛${revKHR.toLocaleString()} KHR</div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-label">Paid Orders</div>
+        <div class="kpi-val">${paidOrders.length} / ${periodOrders.length}</div>
+        <div class="kpi-sub">Completed Transactions</div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-label">Average Ticket</div>
+        <div class="kpi-val">$${Number(avgOrderValue || 0).toFixed(2)}</div>
+        <div class="kpi-sub">៛${Math.round(Number(avgOrderValue || 0) * KHR_RATE).toLocaleString()} KHR</div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-label">Items Sold</div>
+        <div class="kpi-val">${totalItems}</div>
+        <div class="kpi-sub">Across paid orders</div>
+      </div>
+    </div>
+
+    <h3>Order Transactions (${periodOrders.length})</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Order #</th>
+          <th class="center">Table</th>
+          <th>Date &amp; Time</th>
+          <th class="center">Items</th>
+          <th>Payment</th>
+          <th class="center">Status</th>
+          <th class="right">Total (USD)</th>
+          <th class="right">Total (KHR)</th>
+        </tr>
+      </thead>
+      <tbody>${orderRowsHtml}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="6" class="right">PAID REVENUE TOTAL (${paidOrders.length} Paid Orders):</td>
+          <td class="right">$${revUSD.toFixed(2)}</td>
+          <td class="right">៛${revKHR.toLocaleString()}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="footer">
+      <div>Prepared by: ___________________________</div>
+      <div>Approved by (Manager): ___________________________</div>
+    </div>
+  `
+
+  printA4DocumentHtml(`Executive Report - ${period}`, html)
+}
+```
+
+---
+
+### 2. `frontend/src/components/cashier/ReceiptScanner.jsx`
+React 19-safe `useEffect` lifecycle (no `async` ref callback, guaranteed camera cleanup, `Escape` support).
+
+```jsx
+import { useEffect, useRef, useState, useCallback } from "react"
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode"
+import { QrCode, X, Loader2 } from "lucide-react"
+import { useLang } from "@/i18n/LanguageContext"
+
+const SCANNER_ELEMENT_ID = "receipt-qr-scanner"
+
+function extractOrderId(decodedText) {
+  if (!decodedText) return null
+  const clean = String(decodedText).trim()
+
+  const prefMatch = clean.match(/(?:order:?|ORD-?|#)(\d+)/i)
+  if (prefMatch) return parseInt(prefMatch[1], 10)
+
+  const urlMatch = clean.match(/[?&/]order[=_/-]?(\d+)/i)
+  if (urlMatch) return parseInt(urlMatch[1], 10)
+
+  if (/^\d+$/.test(clean)) return parseInt(clean, 10)
+  return null
+}
+
+export default function ReceiptScanner({ onFound, onClose }) {
+  const { t, lang } = useLang()
+  const [error, setError] = useState("")
+  const scannerRef = useRef(null)
+  const onFoundRef = useRef(onFound)
+  onFoundRef.current = onFound
+
+  const stopScanner = useCallback(async () => {
+    const qr = scannerRef.current
+    if (!qr) return
+    scannerRef.current = null
+    try {
+      await qr.stop()
+    } catch {}
+    try {
+      await qr.clear()
+    } catch {}
+  }, [])
+
+  const handleClose = useCallback(async () => {
+    await stopScanner()
+    onClose()
+  }, [stopScanner, onClose])
+
+  useEffect(() => {
+    let cancelled = false
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") handleClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+
+    const start = async () => {
+      try {
+        const qr = new Html5Qrcode(SCANNER_ELEMENT_ID, {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.UPC_A,
+          ],
+          verbose: false,
+        })
+        scannerRef.current = qr
+
+        await qr.start(
+          { facingMode: "environment" },
+          { fps: 12, qrbox: { width: 260, height: 180 } },
+          async (decodedText) => {
+            if (cancelled) return
+            const orderId = extractOrderId(decodedText)
+            if (orderId) {
+              cancelled = true
+              await stopScanner()
+              onFoundRef.current?.(orderId)
+            } else {
+              setError(
+                lang === "km"
+                  ? `បានស្កេន "${decodedText}" — សូមស្កេនបាកូដ ឬ QR លើវិក្កយបត្រ។`
+                  : `Scanned "${decodedText}". Please scan the receipt barcode or QR code.`
+              )
+            }
+          },
+          () => {}
+        )
+
+        if (cancelled) {
+          await stopScanner()
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err)
+          setError(t("guest.cameraError"))
+        }
+      }
+    }
+
+    start()
+
+    return () => {
+      cancelled = true
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKeyDown)
+      stopScanner()
+    }
+  }, [handleClose, stopScanner, t, lang])
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/95 flex flex-col">
+      <div className="flex items-center justify-between p-4 max-w-2xl w-full mx-auto">
+        <div className="flex items-center gap-2.5 text-white">
+          <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+            <QrCode size={16} />
+          </div>
+          <span className="text-sm font-semibold">{t("cashier.scanReceipt")}</span>
+        </div>
+        <button
+          type="button"
+          onClick={handleClose}
+          aria-label="Close scanner"
+          className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center px-4">
+        <div
+          id={SCANNER_ELEMENT_ID}
+          className="w-full max-w-sm rounded-2xl overflow-hidden ring-2 ring-white/20 shadow-2xl"
+        />
+      </div>
+
+      <div className="p-6 text-center text-white/75 text-xs space-y-2">
+        {error ? (
+          <div className="text-red-300 font-medium">{error}</div>
+        ) : (
+          <div className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-white/10">
+            <Loader2 size={13} className="animate-spin text-emerald-300" />
+            <span>
+              {lang === "km"
+                ? "តម្រង់កាមេរ៉ាទៅកាន់បាកូដ ឬ QR កូដលើវិក្កយបត្រ"
+                : "Point camera at the barcode or QR code on the receipt"}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+### 3. `frontend/src/components/cashier/CartBar.jsx`
+Mobile/tablet floating cart bar (hidden on `lg+` where the live right-hand POS ticket sidebar is always visible) with dark-mode-safe banner colors.
+
+```jsx
+import { ShoppingCart } from "lucide-react"
+import { formatUSD, formatKHR } from "@/lib/currency"
+import { useLang } from "@/i18n/LanguageContext"
+
+export default function CartBar({ total, count, onPlaceOrder }) {
+  const { t } = useLang()
+  if (count <= 0) return null
+
+  return (
+    <div className="lg:hidden fixed bottom-4 left-0 right-0 z-30 flex justify-center px-4 pointer-events-none">
+      <div className="w-full max-w-lg pointer-events-auto">
+        <div className="bg-[var(--color-banner-bg)] text-[var(--color-banner-text)] rounded-2xl shadow-2xl flex items-center justify-between gap-3 px-4 py-3 border border-white/10">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[var(--color-primary)] text-white font-bold text-sm flex items-center justify-center shrink-0 tabular-nums">
+              {count}
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-sm tabular-nums truncate">
+                {formatUSD(total)}
+                <span className="text-emerald-300 font-semibold ml-1.5 text-xs">
+                  {formatKHR(total)}
+                </span>
+              </div>
+              <div className="text-[11px] text-white/65">
+                {count} {t("cashier.itemsSelected")}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onPlaceOrder}
+            className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-light)] active:scale-95 text-white font-semibold text-sm px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <ShoppingCart size={15} />
+            <span>{t("cashier.placeOrder")}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+### 4. `frontend/src/components/cashier/CashierMenuGrid.jsx`
+Tactile POS menu cards (tapping an unselected card adds it right away for rapid order entry).
+
+```jsx
+import { menuItemName, cn } from "@/lib/utils"
+import { formatUSD, formatKHR } from "@/lib/currency"
+import { Plus, Minus } from "lucide-react"
+import { useLang } from "@/i18n/LanguageContext"
+import { MenuItemImage } from "@/components/admin/MenuParts"
+
+function MenuItemCard({ item, qty, onAdd, onRemove, lang }) {
+  const { t } = useLang()
+  const isSelected = qty > 0
+  const isAvailable = item.available !== false
+
+  return (
+    <div
+      onClick={() => isAvailable && qty === 0 && onAdd(item.menu_item_id)}
+      className={cn(
+        "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xs hover:shadow-md hover:border-[var(--color-border-strong)] transition-all duration-150 group flex flex-col justify-between relative select-none",
+        isAvailable && qty === 0 && "cursor-pointer active:scale-[0.99]",
+        isSelected && "ring-2 ring-[var(--color-primary)] border-transparent shadow-sm",
+        !isAvailable && "opacity-60"
+      )}
+    >
+      <div className="relative aspect-square overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+        <MenuItemImage item={item} lang={lang} />
+        {!isAvailable && (
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">
+            <span className="bg-[var(--color-danger)] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+              {t("common.soldOut")}
+            </span>
+          </div>
+        )}
+        {isSelected && (
+          <div className="absolute top-2 right-2 bg-[var(--color-primary)] text-white text-xs font-bold min-w-[24px] h-[24px] px-1.5 rounded-full flex items-center justify-center shadow-md tabular-nums">
+            {qty}
+          </div>
+        )}
+      </div>
+
+      <div className="p-2.5 sm:p-3 flex flex-col flex-1 justify-between gap-2">
+        <div className="font-semibold text-[var(--color-text)] text-xs sm:text-sm leading-snug line-clamp-2">
+          {menuItemName(item, lang)}
+        </div>
+
+        <div className="flex items-end justify-between gap-1 pt-1.5 border-t border-[var(--color-border)]/60">
+          <div className="leading-tight">
+            <div className="text-sm font-bold text-[var(--color-primary)] tabular-nums">
+              {formatUSD(item.price)}
+            </div>
+            <div className="text-[10px] text-[var(--color-muted)] tabular-nums">
+              {formatKHR(item.price)}
+            </div>
+          </div>
+
+          {!isAvailable ? (
+            <span className="text-[10px] text-[var(--color-danger)] font-medium">
+              {t("common.unavailable")}
+            </span>
+          ) : qty === 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onAdd(item.menu_item_id)
+              }}
+              aria-label={`Add ${menuItemName(item, lang)}`}
+              className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0"
+            >
+              <Plus size={15} />
+            </button>
+          ) : (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 bg-[var(--color-surface-subtle)] rounded-xl p-0.5 border border-[var(--color-border)] shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => onRemove(item.menu_item_id)}
+                aria-label="Decrease quantity"
+                className="w-7 h-7 rounded-lg bg-[var(--color-surface)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <Minus size={12} />
+              </button>
+              <span className="text-xs font-bold min-w-[18px] text-center text-[var(--color-text)] tabular-nums">
+                {qty}
+              </span>
+              <button
+                type="button"
+                onClick={() => onAdd(item.menu_item_id)}
+                aria-label="Increase quantity"
+                className="w-7 h-7 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <Plus size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function CashierMenuGrid({ items, loading, cart, onAdd, onRemove }) {
+  const { t, lang } = useLang()
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+        {Array.from({ length: 8 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden animate-pulse"
+          >
+            <div className="aspect-square bg-[var(--color-surface-subtle)]" />
+            <div className="p-3 space-y-2">
+              <div className="h-3.5 bg-[var(--color-surface-subtle)] rounded w-3/4" />
+              <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl text-center py-16 text-[var(--color-muted)] text-sm">
+        {t("common.noMenuItems")}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+      {items.map((item) => (
+        <MenuItemCard
+          key={item.menu_item_id}
+          item={item}
+          qty={cart[item.menu_item_id]?.qty || 0}
+          onAdd={onAdd}
+          onRemove={onRemove}
+          lang={lang}
+        />
+      ))}
+    </div>
+  )
+}
+```
+
+---
+
+### 5. `frontend/src/components/cashier/SubmitOrderDialog.jsx`
+Exports **both** `OrderTicketPanel` (used inline in the desktop split-screen POS sidebar) and default `SubmitOrderDialog` (used as the mobile modal)—zero code duplication and dark-mode safe!
+
+```jsx
+import { ShoppingCart, Check, Users, Plus, Minus, AlertCircle, Trash2, Loader2 } from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { formatUSD, formatKHR } from "@/lib/currency"
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui"
+import { MenuItemImage } from "@/components/admin/MenuParts"
+import { ItemNoteRow } from "@/components/shared"
+import { useLang } from "@/i18n/LanguageContext"
+
+export function OrderTicketPanel({
+  tables,
+  tableId,
+  onTableChange,
+  existingOrder,
+  partySize,
+  onPartySizeChange,
+  note,
+  onNoteChange,
+  cartItems,
+  onItemNoteChange,
+  onIncrease,
+  onDecrease,
+  onClearCart,
+  total,
+  errorMsg,
+  submitting,
+  submitted,
+  onConfirm,
+  compact = false,
+}) {
+  const { t, lang } = useLang()
+  const existingItemCount =
+    existingOrder?.order_items?.reduce((s, oi) => s + Number(oi.quantity || 0), 0) || 0
+  const cartCount = cartItems.reduce((s, i) => s + i.qty, 0)
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Table + Metadata Controls */}
+      <div className="space-y-2.5 shrink-0">
+        <Select
+          value={tableId}
+          onValueChange={onTableChange}
+          disabled={submitting || submitted}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder={t("cashier.selectTable")} />
+          </SelectTrigger>
+          <SelectContent>
+            {tables.map((tbl) => (
+              <SelectItem key={tbl.table_id} value={String(tbl.table_id)}>
+                <span className="font-medium">{tbl.table_number}</span>
+                {!tbl.is_available && (
+                  <span className="ml-1.5 text-xs text-[var(--color-warning)]">
+                    {t("cashier.occupied")}
+                  </span>
+                )}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {existingOrder && (
+          <div className="flex items-start gap-2 rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-accent-muted)] px-3 py-2 text-xs text-[var(--color-warning)]">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <div>
+              {lang === "km" ? (
+                <>
+                  ការកុម្ម៉ង់សកម្ម{" "}
+                  <span className="font-bold">
+                    #{String(existingOrder.order_id).padStart(4, "0")}
+                  </span>{" "}
+                  មាន {existingItemCount} មុខរួចហើយ — មុខថ្មីនឹងត្រូវបន្ថែមចូល។
+                </>
+              ) : (
+                <>
+                  Active{" "}
+                  <span className="font-bold">
+                    Order #{String(existingOrder.order_id).padStart(4, "0")}
+                  </span>{" "}
+                  has <span className="font-bold">{existingItemCount}</span> item
+                  {existingItemCount === 1 ? "" : "s"} — new items will be added to it.
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <div className="w-28 relative shrink-0">
+            <Users
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)]"
+            />
+            <input
+              type="number"
+              min="1"
+              inputMode="numeric"
+              value={partySize}
+              onChange={(e) => onPartySizeChange(e.target.value)}
+              placeholder={t("guest.guests")}
+              disabled={submitting || submitted}
+              className="w-full h-9 pl-8 pr-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 text-xs sm:text-sm text-[var(--color-text)] outline-none focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+            />
+          </div>
+          <input
+            value={note}
+            onChange={(e) => onNoteChange(e.target.value)}
+            placeholder={t("cashier.orderNotePlaceholder")}
+            disabled={submitting || submitted}
+            className="flex-1 min-w-0 h-9 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 text-xs sm:text-sm text-[var(--color-text)] outline-none focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+          />
+        </div>
+      </div>
+
+      {/* Cart Items Header */}
+      <div className="flex items-center justify-between pt-3.5 pb-2 shrink-0">
+        <span className="text-[11px] font-semibold text-[var(--color-muted)] uppercase tracking-wider">
+          {t("common.items")} ({cartCount})
+        </span>
+        {cartItems.length > 0 && onClearCart && !submitting && !submitted && (
+          <button
+            type="button"
+            onClick={onClearCart}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
+          >
+            <Trash2 size={11} />
+            <span>{lang === "km" ? "សម្អាត" : "Clear"}</span>
+          </button>
+        )}
+      </div>
+
+      {/* Scrollable Ticket Items */}
+      <div
+        className={cn(
+          "flex-1 overflow-y-auto space-y-2.5 pr-1",
+          compact ? "max-h-64" : "min-h-[180px]"
+        )}
+      >
+        {cartItems.length === 0 ? (
+          <div className="h-full min-h-[160px] flex flex-col items-center justify-center text-center border border-dashed border-[var(--color-border)] rounded-2xl p-6 text-[var(--color-muted)]">
+            <ShoppingCart size={24} className="opacity-35 mb-2" />
+            <div className="text-xs font-medium">
+              {lang === "km"
+                ? "ចុចលើមុខម្ហូបដើម្បីបន្ថែមចូលវិក្កយបត្រ"
+                : "Tap menu items to build an order"}
+            </div>
+          </div>
+        ) : (
+          cartItems.map((item) => (
+            <div
+              key={item.menu_item_id}
+              className="pb-2.5 border-b border-[var(--color-border)]/70 last:border-0 last:pb-0"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl overflow-hidden bg-[var(--color-surface-subtle)] border border-[var(--color-border)]/60 shrink-0">
+                  <MenuItemImage item={item} lang={lang} iconSize={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-[var(--color-text)] truncate">
+                    {menuItemName(item, lang)}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-muted)] tabular-nums">
+                    {formatUSD(item.price)} × {item.qty} ={" "}
+                    <span className="font-semibold text-[var(--color-text-secondary)]">
+                      {formatUSD(Number(item.price) * item.qty)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    disabled={submitting || submitted}
+                    onClick={() => onDecrease(item.menu_item_id)}
+                    aria-label="Decrease quantity"
+                    className="w-6 h-6 rounded-lg bg-[var(--color-danger-muted)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white flex items-center justify-center transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    <Minus size={11} />
+                  </button>
+                  <span className="text-xs font-bold w-5 text-center text-[var(--color-text)] tabular-nums">
+                    {item.qty}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={submitting || submitted}
+                    onClick={() => onIncrease(item.menu_item_id)}
+                    aria-label="Increase quantity"
+                    className="w-6 h-6 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white flex items-center justify-center transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    <Plus size={11} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-1.5 pl-12">
+                <ItemNoteRow
+                  note={item.note}
+                  onChange={(v) => onItemNoteChange(item.menu_item_id, v)}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Error + Total + Submit Footer */}
+      <div className="pt-3 mt-3 border-t border-[var(--color-border)] space-y-2.5 shrink-0">
+        {errorMsg && (
+          <div
+            role="alert"
+            className="text-xs font-medium text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2"
+          >
+            {errorMsg}
+          </div>
+        )}
+
+        <div className="bg-[var(--color-banner-bg)] text-[var(--color-banner-text)] rounded-xl flex items-center justify-between px-4 py-2.5">
+          <span className="text-xs font-semibold uppercase tracking-wider text-white/70">
+            {t("common.total")}
+          </span>
+          <div className="text-right tabular-nums">
+            <span className="text-base font-bold">{formatUSD(total)}</span>
+            <span className="text-emerald-300 text-xs font-semibold ml-1.5">
+              {formatKHR(total)}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={submitting || submitted || cartItems.length === 0}
+          className={cn(
+            "w-full h-11 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs",
+            submitted
+              ? "bg-[var(--color-success)] text-white"
+              : "bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white",
+            (submitting || submitted || cartItems.length === 0) &&
+              "opacity-60 cursor-not-allowed"
+          )}
+        >
+          {submitted ? (
+            <>
+              <Check size={16} />
+              <span>{t("common.done")}</span>
+            </>
+          ) : submitting ? (
+            <>
+              <Loader2 size={15} className="animate-spin" />
+              <span>{t("cashier.submitting")}</span>
+            </>
+          ) : (
+            <>
+              <ShoppingCart size={15} />
+              <span>{t("cashier.submitOrder")}</span>
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function SubmitOrderDialog({ open, onOpenChange, ...panelProps }) {
+  const { t } = useLang()
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] flex items-center justify-center">
+              <ShoppingCart size={16} className="text-[var(--color-primary)]" />
+            </div>
+            <DialogTitle>{t("cashier.submitOrder")}</DialogTitle>
+          </div>
+        </DialogHeader>
+        <OrderTicketPanel {...panelProps} compact />
+      </DialogContent>
+    </Dialog>
+  )
+}
+```
+
+---
+
+### 6. `frontend/src/pages/cashier/CashierMenu.jsx`
+Full split-screen POS workspace on desktop/tablet + bottom bar & modal on mobile.
+
+```jsx
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { Search, ShoppingCart, X } from "lucide-react"
+import { useMenuItemStore } from "../../context/menuItemContext"
+import { useMenuCategoryStore } from "../../context/menuCategoryContext"
+import { useTableStore } from "../../context/tableContext"
+import { useOrderStore } from "../../context/orderContext"
+import { useOrderItemStore } from "../../context/orderItemContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import CashierMenuGrid from "@/components/cashier/CashierMenuGrid"
+import CartBar from "@/components/cashier/CartBar"
+import SubmitOrderDialog, { OrderTicketPanel } from "@/components/cashier/SubmitOrderDialog"
+import { useLang } from "@/i18n/LanguageContext"
+import { cn, menuItemMatchesSearch, categoryDisplayName } from "@/lib/utils"
+
+export default function CashierMenu() {
+  usePageTitle("POS Menu")
+  const { t, lang } = useLang()
+  const { items, fetchItems, isLoading: itemsLoading } = useMenuItemStore()
+  const { categories, fetchCategories } = useMenuCategoryStore()
+  const { tables, fetchTables } = useTableStore()
+  const { createOrder, getActiveOrderByTable, updateOrderDetails } = useOrderStore()
+  const { addItem } = useOrderItemStore()
+
+  const [activeCat, setActiveCat] = useState("All")
+  const [search, setSearch] = useState("")
+  const [cart, setCart] = useState({})
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [tableId, setTableId] = useState("")
+  const [partySize, setPartySize] = useState("")
+  const [note, setNote] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState("")
+  const [existingTableOrder, setExistingTableOrder] = useState(null)
+
+  const submittingRef = useRef(false)
+  const resetTimerRef = useRef(null)
+
+  useSocketRole("cashier")
+
+  const safeFetchTables = useCallback(() => {
+    fetchTables().catch(() => {})
+  }, [fetchTables])
+
+  useSocketEvent("table:updated", safeFetchTables)
+  useSocketEvent("order:new", safeFetchTables)
+  useSocketEvent("order:deleted", safeFetchTables)
+  useSocketEvent("payment:completed", safeFetchTables)
+
+  useEffect(() => {
+    fetchItems().catch(() => {})
+    fetchCategories().catch(() => {})
+    fetchTables().catch(() => {})
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+    }
+  }, [fetchItems, fetchCategories, fetchTables])
+
+  // Check if selected table already has an active unpaid order
+  useEffect(() => {
+    if (!tableId) {
+      setExistingTableOrder(null)
+      return
+    }
+    let cancelled = false
+    getActiveOrderByTable(parseInt(tableId, 10))
+      .then((ord) => {
+        if (!cancelled) setExistingTableOrder(ord || null)
+      })
+      .catch(() => {
+        if (!cancelled) setExistingTableOrder(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [tableId, tables, getActiveOrderByTable])
+
+  const availableItems = useMemo(() => (items || []).filter((i) => i.available), [items])
+
+  const filtered = useMemo(
+    () =>
+      availableItems.filter((i) => {
+        const matchesCat = activeCat === "All" || i.category_id === activeCat
+        const catName = categories.find((c) => c.category_id === i.category_id)?.category_name
+        return matchesCat && menuItemMatchesSearch(i, search, catName)
+      }),
+    [availableItems, activeCat, categories, search]
+  )
+
+  const itemMap = useMemo(() => {
+    const map = new Map()
+    for (const i of items || []) map.set(i.menu_item_id, i)
+    return map
+  }, [items])
+
+  const cartItems = useMemo(
+    () =>
+      Object.entries(cart)
+        .map(([id, entry]) => {
+          const menuItem = itemMap.get(Number(id))
+          if (!menuItem || !entry?.qty) return null
+          return { ...menuItem, qty: entry.qty, note: entry.note || "" }
+        })
+        .filter(Boolean),
+    [cart, itemMap]
+  )
+
+  const total = useMemo(
+    () => cartItems.reduce((s, i) => s + Number(i.price || 0) * i.qty, 0),
+    [cartItems]
+  )
+  const cartCount = useMemo(() => cartItems.reduce((s, i) => s + i.qty, 0), [cartItems])
+
+  const addToCart = (id) =>
+    setCart((c) => ({
+      ...c,
+      [id]: { qty: (c[id]?.qty || 0) + 1, note: c[id]?.note || "" },
+    }))
+
+  const removeFromCart = (id) =>
+    setCart((c) => {
+      const next = { ...c }
+      if ((next[id]?.qty || 0) <= 1) delete next[id]
+      else next[id] = { ...next[id], qty: next[id].qty - 1 }
+      return next
+    })
+
+  const setItemNote = (id, itemNote) =>
+    setCart((c) => (c[id] ? { ...c, [id]: { ...c[id], note: itemNote } } : c))
+
+  const handleConfirm = async () => {
+    if (submittingRef.current || submitting || submitted) return
+    if (!tableId) {
+      setErrorMsg(t("cashier.selectTablePrompt"))
+      return
+    }
+    if (cartItems.length === 0) return
+
+    submittingRef.current = true
+    setSubmitting(true)
+    setErrorMsg("")
+
+    const parsedParty = partySize ? parseInt(partySize, 10) : undefined
+    const validParty = parsedParty && parsedParty > 0 ? parsedParty : undefined
+    const cleanNote = note.trim() || undefined
+
+    try {
+      let orderId
+      const existing = await getActiveOrderByTable(parseInt(tableId, 10))
+
+      if (existing) {
+        orderId = existing.order_id
+        if (validParty || cleanNote) {
+          try {
+            await updateOrderDetails(orderId, {
+              party_size: validParty,
+              note: cleanNote,
+            })
+          } catch {}
+        }
+      } else {
+        try {
+          const order = await createOrder({
+            table_id: parseInt(tableId, 10),
+            party_size: validParty,
+            note: cleanNote,
+          })
+          orderId = order.order_id
+        } catch (createErr) {
+          const fallbackId = createErr?.response?.data?.order_id
+          if (fallbackId) {
+            orderId = fallbackId
+          } else {
+            throw createErr
+          }
+        }
+      }
+
+      const results = await Promise.allSettled(
+        cartItems.map((item) =>
+          addItem({
+            order_id: orderId,
+            menu_item_id: item.menu_item_id,
+            quantity: item.qty,
+            note: item.note?.trim() || undefined,
+          })
+        )
+      )
+
+      const succeededIds = new Set()
+      let firstError = null
+      results.forEach((res, idx) => {
+        if (res.status === "fulfilled") {
+          succeededIds.add(cartItems[idx].menu_item_id)
+        } else if (!firstError) {
+          firstError = res.reason
+        }
+      })
+
+      if (succeededIds.size > 0) {
+        setCart((prev) => {
+          const next = { ...prev }
+          succeededIds.forEach((id) => delete next[id])
+          return next
+        })
+      }
+
+      if (firstError) {
+        throw firstError
+      }
+
+      setSubmitted(true)
+      setSubmitting(false)
+      fetchTables().catch(() => {})
+
+      resetTimerRef.current = setTimeout(() => {
+        submittingRef.current = false
+        setSubmitted(false)
+        setCart({})
+        setTableId("")
+        setPartySize("")
+        setNote("")
+        setExistingTableOrder(null)
+        setConfirmOpen(false)
+      }, 900)
+    } catch (err) {
+      submittingRef.current = false
+      setSubmitting(false)
+      setErrorMsg(err?.response?.data?.message || t("cashier.submitFailed"))
+    }
+  }
+
+  const ticketProps = {
+    tables,
+    tableId,
+    onTableChange: (v) => {
+      setTableId(v)
+      setErrorMsg("")
+    },
+    existingOrder: existingTableOrder,
+    partySize,
+    onPartySizeChange: setPartySize,
+    note,
+    onNoteChange: setNote,
+    cartItems,
+    onItemNoteChange: setItemNote,
+    onIncrease: addToCart,
+    onDecrease: removeFromCart,
+    onClearCart: () => setCart({}),
+    total,
+    errorMsg,
+    submitting,
+    submitted,
+    onConfirm: handleConfirm,
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start pb-24 lg:pb-0">
+      {/* Left: Search, Category Pills & Menu Grid */}
+      <div className="space-y-4 min-w-0">
+        <div className="relative max-w-md">
+          <Search
+            size={15}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("menu.searchPlaceholder")}
+            className="w-full h-10 pl-10 pr-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)] transition-all"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* One-Tap Category Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+          <button
+            type="button"
+            onClick={() => setActiveCat("All")}
+            className={cn(
+              "shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer",
+              activeCat === "All"
+                ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]"
+            )}
+          >
+            {t("common.all")}
+          </button>
+          {(categories || []).map((cat) => {
+            const active = activeCat === cat.category_id
+            return (
+              <button
+                key={cat.category_id}
+                type="button"
+                onClick={() => setActiveCat(active ? "All" : cat.category_id)}
+                className={cn(
+                  "shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer",
+                  active
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs"
+                    : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]"
+                )}
+              >
+                {categoryDisplayName(cat, lang)}
+              </button>
+            )
+          })}
+        </div>
+
+        <CashierMenuGrid
+          items={filtered}
+          loading={itemsLoading && items.length === 0}
+          cart={cart}
+          onAdd={addToCart}
+          onRemove={removeFromCart}
+        />
+      </div>
+
+      {/* Right: Sticky Live POS Ticket Sidebar (Desktop & Landscape Tablets) */}
+      <aside className="hidden lg:flex flex-col sticky top-0 h-[calc(100dvh-6.5rem)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-xs">
+        <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--color-border)] shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] flex items-center justify-center">
+              <ShoppingCart size={15} />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[var(--color-text)] leading-none">
+                {lang === "km" ? "វិក្កយបត្រកុម្ម៉ង់" : "Current Ticket"}
+              </div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                {cartCount} {t("cashier.itemsSelected")}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0">
+          <OrderTicketPanel {...ticketProps} />
+        </div>
+      </aside>
+
+      {/* Mobile / Portrait Tablet Floating Bar + Modal */}
+      <CartBar
+        total={total}
+        count={cartCount}
+        onPlaceOrder={() => {
+          fetchTables().catch(() => {})
+          setErrorMsg("")
+          setConfirmOpen(true)
+        }}
+      />
+
+      <SubmitOrderDialog
+        open={confirmOpen}
+        onOpenChange={(v) => {
+          if (!v && (submitting || submitted || submittingRef.current)) return
+          setConfirmOpen(v)
+        }}
+        {...ticketProps}
+      />
+    </div>
+  )
+}
+```
+
+---
+
+### 7. `frontend/src/components/cashier/ActiveOrdersTable.jsx`
+Modern responsive POS Order Cards with elapsed time, item preview, allergy alerts, USD/KHR total, and clear tap targets.
+
+```jsx
+import { Eye, Printer, CreditCard, Users, AlertTriangle, Trash2, Pencil, Clock } from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { formatUSD, formatKHR, orderTotal } from "@/lib/currency"
+import { isAllergyNote } from "@/lib/noteTags"
+import { statusConfig, printOrderReceipt } from "./orderHelpers"
+import { useLang } from "@/i18n/LanguageContext"
+
+function formatElapsed(dateStr, nowMs) {
+  if (!dateStr) return ""
+  const diffMin = Math.max(0, Math.floor((nowMs - new Date(dateStr).getTime()) / 60000))
+  if (diffMin < 1) return "Just now"
+  if (diffMin < 60) return `${diffMin}m ago`
+  const hrs = Math.floor(diffMin / 60)
+  const mins = diffMin % 60
+  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`
+}
+
+function OrderCard({ order, nowMs, onPay, onView, onDelete }) {
+  const { t, lang } = useLang()
+  const cfg = statusConfig[order.status] || statusConfig.Pending
+  const total = orderTotal(order)
+  const items = order.order_items || []
+  const itemCount = items.reduce((s, oi) => s + Number(oi.quantity || 0), 0)
+  const hasAllergy = items.some((oi) => isAllergyNote(oi.note))
+  const isPaid = order.is_paid ?? order.status === "Paid"
+  const hasEditableItems = !isPaid && items.some((oi) => oi.status === "Pending")
+
+  const accentBorder =
+    order.status === "Served"
+      ? "border-l-4 border-l-[var(--color-primary)]"
+      : order.status === "Preparing"
+        ? "border-l-4 border-l-[var(--color-warning)]"
+        : "border-l-4 border-l-[var(--color-border-strong)]"
+
+  return (
+    <div
+      className={cn(
+        "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-3.5",
+        accentBorder,
+        hasAllergy && "ring-1 ring-[var(--color-danger)]/40"
+      )}
+    >
+      {/* Card Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-base text-[var(--color-text)] tabular-nums">
+              #{String(order.order_id).padStart(4, "0")}
+            </span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-lg bg-[var(--color-surface-subtle)] text-[var(--color-text)]">
+              {t("common.table")} {order.table?.table_number || "—"}
+            </span>
+            {order.queue_number != null && (
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)]">
+                Q#{order.queue_number}
+              </span>
+            )}
+            {hasAllergy && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-danger-muted)] text-[var(--color-danger)]">
+                <AlertTriangle size={10} /> Allergy
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5 text-xs text-[var(--color-muted)] mt-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1">
+              <Clock size={11} />
+              {new Date(order.order_date).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+              {nowMs && ` · ${formatElapsed(order.order_date, nowMs)}`}
+            </span>
+            {order.party_size != null && (
+              <span className="inline-flex items-center gap-1">
+                <Users size={11} /> {order.party_size}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <span className={cn("text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0", cfg.color)}>
+          {t(cfg.labelKey)}
+        </span>
+      </div>
+
+      {/* Compact Items Preview */}
+      <div className="bg-[var(--color-background)]/65 border border-[var(--color-border)]/70 rounded-xl p-2.5 space-y-1">
+        {items.slice(0, 3).map((oi) => (
+          <div key={oi.order_item_id} className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-[var(--color-text-secondary)] truncate">
+              <span className="font-bold text-[var(--color-text)] mr-1.5">{oi.quantity}×</span>
+              {menuItemName(oi.menu_item, lang)}
+            </span>
+            <span className="text-[var(--color-muted)] tabular-nums shrink-0">
+              {formatUSD(Number(oi.unit_price) * oi.quantity)}
+            </span>
+          </div>
+        ))}
+        {items.length > 3 && (
+          <button
+            type="button"
+            onClick={() => onView(order)}
+            className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline pt-0.5 cursor-pointer"
+          >
+            +{items.length - 3} {lang === "km" ? "មុខទៀត..." : "more items..."}
+          </button>
+        )}
+        {order.note && (
+          <div className="text-[11px] text-[var(--color-warning)] pt-1 border-t border-[var(--color-border)]/60 truncate">
+            {t("history.note")}: {order.note}
+          </div>
+        )}
+      </div>
+
+      {/* Total & Action Row */}
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-[var(--color-border)]/60">
+        <div className="leading-tight">
+          <div className="text-[11px] text-[var(--color-muted)]">
+            {itemCount} {t("station.items")}
+          </div>
+          <div className="flex items-baseline gap-1.5 tabular-nums">
+            <span className="text-lg font-bold text-[var(--color-text)]">
+              {formatUSD(total)}
+            </span>
+            <span className="text-[11px] text-[var(--color-muted)]">
+              {formatKHR(total)}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => printOrderReceipt(order)}
+            title={t("cashier.printReceipt")}
+            aria-label={t("cashier.printReceipt")}
+            className="p-2 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] hover:border-[var(--color-primary)]/30 transition-colors cursor-pointer"
+          >
+            <Printer size={15} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onView(order)}
+            title={hasEditableItems ? t("common.edit") : t("cashier.viewDetails")}
+            aria-label={hasEditableItems ? t("common.edit") : t("cashier.viewDetails")}
+            className="p-2 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] hover:border-[var(--color-primary)]/30 transition-colors cursor-pointer"
+          >
+            {hasEditableItems ? <Pencil size={15} /> : <Eye size={15} />}
+          </button>
+
+          {onDelete && !isPaid && (
+            <button
+              type="button"
+              onClick={() => onDelete(order)}
+              title={t("common.delete")}
+              aria-label={t("common.delete")}
+              className="p-2 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-muted)] hover:border-[var(--color-danger)]/30 transition-colors cursor-pointer"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
+
+          {onPay && (
+            <button
+              type="button"
+              onClick={() => onPay(order)}
+              className="flex items-center gap-1.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] active:scale-95 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
+            >
+              <CreditCard size={14} />
+              <span>{t("cashier.pay")}</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function ActiveOrdersTable({ orders, nowMs, onPay, onView, onDelete }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+      {orders.map((order) => (
+        <OrderCard
+          key={order.order_id}
+          order={order}
+          nowMs={nowMs}
+          onPay={onPay}
+          onView={onView}
+          onDelete={onDelete}
+        />
+      ))}
+    </div>
+  )
+}
+```
+
+---
+
+### 8. `frontend/src/components/cashier/ViewOrderDialog.jsx`
+
+```jsx
+import { useState, useEffect } from "react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  Button,
+  Input,
+  Badge,
+} from "@/components/ui"
+import { Users, AlertTriangle, Printer, Trash2, Plus, Minus, Pencil, Check, X } from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { formatUSD, formatKHR, orderTotal } from "@/lib/currency"
+import { isAllergyNote } from "@/lib/noteTags"
+import { printOrderReceipt } from "./orderHelpers"
+import { useLang } from "@/i18n/LanguageContext"
+
+const itemStatusBadge = {
+  Pending: { variant: "secondary", key: "status.pending" },
+  Preparing: { variant: "warning", key: "status.preparing" },
+  Ready: { variant: "success", key: "status.ready" },
+}
+
+export default function ViewOrderDialog({
+  order,
+  onClose,
+  onDeleteItem,
+  onUpdateItemQty,
+  onUpdateItemNote,
+}) {
+  const { t, lang } = useLang()
+  const isPaid = order ? (order.is_paid ?? order.status === "Paid") : false
+  const [editingNoteId, setEditingNoteId] = useState(null)
+  const [noteDraft, setNoteDraft] = useState("")
+  const [busyId, setBusyId] = useState(null)
+  const [errMsg, setErrMsg] = useState("")
+
+  useEffect(() => {
+    setEditingNoteId(null)
+    setNoteDraft("")
+    setErrMsg("")
+  }, [order?.order_id])
+
+  const handleQtyChange = async (oi, delta) => {
+    if (!onUpdateItemQty) return
+    const next = oi.quantity + delta
+    if (next < 1) return
+    setBusyId(oi.order_item_id)
+    setErrMsg("")
+    try {
+      await onUpdateItemQty(oi.order_item_id, next)
+    } catch (err) {
+      setErrMsg(err?.response?.data?.message || t("common.failed"))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleSaveNote = async (oi) => {
+    if (!onUpdateItemNote) return
+    setBusyId(oi.order_item_id)
+    setErrMsg("")
+    try {
+      await onUpdateItemNote(oi.order_item_id, noteDraft.trim() || null)
+      setEditingNoteId(null)
+    } catch (err) {
+      setErrMsg(err?.response?.data?.message || t("common.failed"))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const total = order ? orderTotal(order) : 0
+
+  return (
+    <Dialog open={!!order} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        {order && (
+          <>
+            <DialogHeader>
+              <DialogTitle>
+                {t("common.order")} #{String(order.order_id).padStart(4, "0")}
+              </DialogTitle>
+              <DialogDescription>
+                {t("common.table")} {order.table?.table_number || "—"} ·{" "}
+                {new Date(order.order_date).toLocaleString()}
+              </DialogDescription>
+            </DialogHeader>
+
+            {(order.party_size != null || order.note) && (
+              <div className="flex flex-wrap gap-1.5 -mt-1">
+                {order.party_size != null && (
+                  <Badge variant="blue" className="gap-1">
+                    <Users size={11} /> {order.party_size}{" "}
+                    {order.party_size !== 1 ? t("history.guests") : t("history.guest")}
+                  </Badge>
+                )}
+                {order.note && (
+                  <Badge variant="warning">
+                    {t("history.note")}: {order.note}
+                  </Badge>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {errMsg && (
+                <div
+                  role="alert"
+                  className="text-xs font-medium text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2"
+                >
+                  {errMsg}
+                </div>
+              )}
+
+              <div className="divide-y divide-[var(--color-border)]/70 max-h-[45dvh] overflow-y-auto pr-1">
+                {order.order_items?.map((oi) => {
+                  const canEdit = !isPaid && oi.status === "Pending"
+                  const isBusy = busyId === oi.order_item_id
+                  const badge = itemStatusBadge[oi.status] || itemStatusBadge.Pending
+
+                  return (
+                    <div key={oi.order_item_id} className="py-2.5 first:pt-0 last:pb-0 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium text-[var(--color-text)] truncate">
+                              {menuItemName(oi.menu_item, lang)}
+                            </span>
+                            {!(canEdit && onUpdateItemQty) && (
+                              <span className="text-xs text-[var(--color-muted)] font-semibold">
+                                ×{oi.quantity}
+                              </span>
+                            )}
+                            {oi.status && (
+                              <Badge variant={badge.variant} className="text-[10px] py-0 px-2">
+                                {t(badge.key)}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {canEdit && onUpdateItemQty && (
+                            <div className="flex items-center gap-1 bg-[var(--color-surface-subtle)] border border-[var(--color-border)] rounded-lg p-0.5">
+                              <button
+                                type="button"
+                                disabled={isBusy || oi.quantity <= 1}
+                                onClick={() => handleQtyChange(oi, -1)}
+                                aria-label="Decrease quantity"
+                                className="w-6 h-6 rounded-md bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-35 cursor-pointer"
+                              >
+                                <Minus size={11} />
+                              </button>
+                              <span className="text-xs font-bold min-w-[18px] text-center tabular-nums">
+                                {oi.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => handleQtyChange(oi, 1)}
+                                aria-label="Increase quantity"
+                                className="w-6 h-6 rounded-md bg-[var(--color-primary)] text-white flex items-center justify-center disabled:opacity-35 cursor-pointer"
+                              >
+                                <Plus size={11} />
+                              </button>
+                            </div>
+                          )}
+
+                          <span className="font-semibold text-[var(--color-text)] tabular-nums min-w-[56px] text-right">
+                            {formatUSD(Number(oi.unit_price) * oi.quantity)}
+                          </span>
+
+                          {canEdit && onUpdateItemNote && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingNoteId(oi.order_item_id)
+                                setNoteDraft(oi.note || "")
+                              }}
+                              title={t("common.edit")}
+                              aria-label="Edit item note"
+                              className="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
+
+                          {onDeleteItem && !isPaid && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteItem(order, oi)}
+                              title={t("common.delete")}
+                              aria-label={t("common.delete")}
+                              className="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-muted)] transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingNoteId === oi.order_item_id ? (
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <Input
+                            value={noteDraft}
+                            onChange={(e) => setNoteDraft(e.target.value)}
+                            placeholder={t("noteTag.freeTextPlaceholder")}
+                            className="h-8 text-xs flex-1"
+                          />
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleSaveNote(oi)}
+                            aria-label="Save note"
+                            className="p-1.5 rounded-lg bg-[var(--color-primary)] text-white cursor-pointer disabled:opacity-50"
+                          >
+                            <Check size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setEditingNoteId(null)}
+                            aria-label="Cancel"
+                            className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] cursor-pointer"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ) : oi.note ? (
+                        <div
+                          className={cn(
+                            "inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 px-2 py-0.5 rounded-full",
+                            isAllergyNote(oi.note)
+                              ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)] border border-[var(--color-danger)]/20"
+                              : "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20"
+                          )}
+                        >
+                          {isAllergyNote(oi.note) && <AlertTriangle size={10} />}
+                          <span>{oi.note}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="border-t border-[var(--color-border)] pt-3 flex items-baseline justify-between">
+                <span className="text-sm font-semibold text-[var(--color-text-secondary)]">
+                  {t("common.total")}
+                </span>
+                <div className="text-right tabular-nums">
+                  <span className="text-lg font-bold text-[var(--color-primary)]">
+                    {formatUSD(total)}
+                  </span>
+                  <span className="text-xs text-[var(--color-muted)] ml-2">
+                    {formatKHR(total)}
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                variant="outline"
+                onClick={() => printOrderReceipt(order)}
+                className="w-full"
+              >
+                <Printer size={15} /> {t("cashier.printReceipt")}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+```
+
+---
+
+### 9. `frontend/src/components/cashier/PaymentDialog.jsx`
+Live total-change guard for KHQR, Escape/scroll lock, clean state reset per order, and crisp POS layout.
+
+```jsx
+import { useState, useEffect, useRef, useCallback } from "react"
+import { Check, QrCode, Loader2, X, CreditCard, Printer, RefreshCw, AlertTriangle } from "lucide-react"
+import { QRCodeSVG } from "qrcode.react"
+import { cn, menuItemName } from "@/lib/utils"
+import { KHR_RATE, formatUSD, formatKHR, orderTotal } from "@/lib/currency"
+import { usePaymentStore } from "../../context/paymentContext"
+import api from "../../services/axios"
+import { useSocketEvent } from "../../services/socket"
+import { printOrderReceipt } from "./orderHelpers"
+import { useLang } from "@/i18n/LanguageContext"
+
+export default function PaymentDialog({ order, paymentMethods = [], onClose, onPaid }) {
+  const { t, lang } = useLang()
+  const { createPayment } = usePaymentStore()
+
+  const [payMethodId, setPayMethodId] = useState(null)
+  const [paying, setPaying] = useState(false)
+  const [errorMsg, setErrorMsg] = useState("")
+  const [cashGiven, setCashGiven] = useState("")
+  const [cashCur, setCashCur] = useState("USD")
+
+  const [payMode, setPayMode] = useState("normal")
+  const [khqrData, setKhqrData] = useState(null)
+  const [khqrGeneratedTotal, setKhqrGeneratedTotal] = useState(null)
+  const [khqrCurrency, setKhqrCurrency] = useState("KHR")
+  const [khqrGenerating, setKhqrGenerating] = useState(false)
+  const [khqrPaid, setKhqrPaid] = useState(false)
+  const [khqrError, setKhqrError] = useState(null)
+  const [khqrConfirming, setKhqrConfirming] = useState(false)
+  const [khqrCheckingNow, setKhqrCheckingNow] = useState(false)
+  const [khqrCountdown, setKhqrCountdown] = useState(600)
+
+  const khqrPollRef = useRef(null)
+  const khqrDelayRef = useRef(null)
+  const khqrCountdownRef = useRef(null)
+  const khqrSessionReqRef = useRef(0)
+  const handledPaidRef = useRef(false)
+  const checkingInFlightRef = useRef(false)
+  const onCloseRef = useRef(onClose)
+  const onPaidRef = useRef(onPaid)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+    onPaidRef.current = onPaid
+  }, [onClose, onPaid])
+
+  const stopKhqrPolling = useCallback(() => {
+    khqrSessionReqRef.current += 1
+    if (khqrDelayRef.current) clearTimeout(khqrDelayRef.current)
+    if (khqrPollRef.current) clearInterval(khqrPollRef.current)
+    if (khqrCountdownRef.current) clearInterval(khqrCountdownRef.current)
+    khqrDelayRef.current = null
+    khqrPollRef.current = null
+    khqrCountdownRef.current = null
+  }, [])
+
+  const finishKhqrPayment = useCallback(() => {
+    if (handledPaidRef.current) return
+    handledPaidRef.current = true
+    stopKhqrPolling()
+    setKhqrPaid(true)
+    setKhqrError(null)
+    onPaidRef.current?.()
+  }, [stopKhqrPolling])
+
+  // Reset full dialog state when opening a different order
+  useEffect(() => {
+    if (!order?.order_id) return
+    stopKhqrPolling()
+    handledPaidRef.current = false
+    checkingInFlightRef.current = false
+    setPayMethodId(
+      paymentMethods.find((m) => !/khqr|aba|bakong/i.test(m.method_name))?.method_id ||
+        paymentMethods[0]?.method_id ||
+        null
+    )
+    setPaying(false)
+    setErrorMsg("")
+    setCashGiven("")
+    setCashCur("USD")
+    setPayMode("normal")
+    setKhqrData(null)
+    setKhqrGeneratedTotal(null)
+    setKhqrGenerating(false)
+    setKhqrPaid(false)
+    setKhqrError(null)
+    setKhqrConfirming(false)
+    setKhqrCheckingNow(false)
+  }, [order?.order_id, stopKhqrPolling])
+
+  useEffect(() => {
+    if (!payMethodId && paymentMethods.length > 0) {
+      setPayMethodId(
+        paymentMethods.find((m) => !/khqr|aba|bakong/i.test(m.method_name))?.method_id ||
+          paymentMethods[0]?.method_id ||
+          null
+      )
+    }
+  }, [paymentMethods, payMethodId])
+
+  // Lock body scroll and allow Escape to close when not processing
+  useEffect(() => {
+    if (!order?.order_id) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape" && !paying && !khqrConfirming) {
+        stopKhqrPolling()
+        onCloseRef.current?.()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKeyDown)
+    }
+  }, [order?.order_id, paying, khqrConfirming, stopKhqrPolling])
+
+  useEffect(() => () => stopKhqrPolling(), [stopKhqrPolling])
+
+  // Invalidate dynamic KHQR if the live order total changes before payment completes
+  const liveTotal = order ? orderTotal(order) : 0
+  useEffect(() => {
+    if (
+      payMode === "khqr" &&
+      !khqrPaid &&
+      khqrData &&
+      !khqrData.is_static &&
+      khqrGeneratedTotal != null &&
+      Math.abs(liveTotal - khqrGeneratedTotal) > 0.001
+    ) {
+      stopKhqrPolling()
+      setKhqrData(null)
+      setKhqrError(
+        lang === "km"
+          ? "តម្លៃសរុបបានផ្លាស់ប្តូរ — សូមបង្កើតកូដ KHQR ថ្មីម្តងទៀត។"
+          : "Order total changed — please regenerate KHQR for the updated amount."
+      )
+    }
+  }, [liveTotal, payMode, khqrPaid, khqrData, khqrGeneratedTotal, stopKhqrPolling, lang])
+
+  useSocketEvent("payment:completed", (data) => {
+    if (order?.order_id && Number(data?.order_id) === Number(order.order_id)) {
+      finishKhqrPayment()
+    }
+  })
+
+  useSocketEvent("order:status_changed", (data) => {
+    if (
+      order?.order_id &&
+      Number(data?.order_id) === Number(order.order_id) &&
+      data?.status === "Paid"
+    ) {
+      finishKhqrPayment()
+    }
+  })
+
+  if (!order) return null
+
+  const total = liveTotal
+  const totalKHR = Math.round(total * KHR_RATE)
+  const itemCount =
+    order.order_items?.reduce((s, oi) => s + Number(oi.quantity || 0), 0) || 0
+
+  const khqrMethod = paymentMethods.find((m) => /khqr|aba|bakong/i.test(m.method_name))
+  const normalMethods = paymentMethods.filter((m) => m.method_id !== khqrMethod?.method_id)
+
+  const selectedMethod = paymentMethods.find((m) => m.method_id === payMethodId)
+  const isCash = /cash|សាច់ប្រាក់/i.test(selectedMethod?.method_name || "")
+  const cashInput = parseFloat(cashGiven) || 0
+  const cashUSD = cashCur === "KHR" ? cashInput / KHR_RATE : cashInput
+  const change = cashUSD - total
+  const isShort = change < -0.005
+  const totalInCur = cashCur === "KHR" ? totalKHR : total
+  const fmt = (usd) => (cashCur === "KHR" ? formatKHR(usd) : formatUSD(usd))
+
+  const handleClose = () => {
+    stopKhqrPolling()
+    onCloseRef.current?.()
+  }
+
+  const checkMd5Now = async (
+    dataToCheck = khqrData,
+    showFeedback = false,
+    reqId = khqrSessionReqRef.current
+  ) => {
+    if (
+      !dataToCheck?.md5 ||
+      !dataToCheck?.khqr_token ||
+      dataToCheck.is_static ||
+      handledPaidRef.current
+    ) {
+      return
+    }
+    if (!showFeedback && checkingInFlightRef.current) return
+    checkingInFlightRef.current = true
+    if (showFeedback) {
+      setKhqrCheckingNow(true)
+      setKhqrError(null)
+    }
+    try {
+      const check = await api.get(
+        `/payments/khqr/check/${encodeURIComponent(dataToCheck.md5)}?order_id=${order.order_id}&token=${encodeURIComponent(dataToCheck.khqr_token)}`,
+        { silent: !showFeedback }
+      )
+      if (reqId !== khqrSessionReqRef.current || handledPaidRef.current) return
+      if (check.data?.paid) {
+        finishKhqrPayment()
+      } else if (check.data?.ip_blocked) {
+        stopKhqrPolling()
+        setKhqrError(
+          "Auto-confirm blocked by Bakong API (403). Verify payment on your phone and click confirm."
+        )
+      } else if (check.data?.token_missing || check.data?.auth_error) {
+        stopKhqrPolling()
+        setKhqrError(check.data.reason || "Bakong token not configured or expired on server.")
+      } else if (check.data?.rate_limited) {
+        stopKhqrPolling()
+        setKhqrError(`Bakong API: ${check.data.reason || "Daily request limit exceeded."}`)
+      } else if (showFeedback) {
+        setKhqrError(
+          check.data?.reason
+            ? `Bakong status: ${check.data.reason}`
+            : lang === "km"
+              ? "មិនទាន់រកឃើញការទូទាត់នៅលើ Bakong នៅឡើយទេ។ សូមព្យាយាមម្តងទៀតបន្តិចទៀត។"
+              : "Payment not detected on Bakong yet. Please try again in a few seconds."
+        )
+      }
+    } catch (err) {
+      if (reqId !== khqrSessionReqRef.current || handledPaidRef.current) return
+      const status = err?.response?.status
+      if (status === 409 && err?.response?.data?.already_paid) {
+        finishKhqrPayment()
+      } else if (status === 400 || status === 403 || status === 404 || status === 409) {
+        stopKhqrPolling()
+        setKhqrError(
+          err?.response?.data?.message || "KHQR verification stopped. Please generate a new QR code."
+        )
+      } else if (showFeedback) {
+        setKhqrError(err?.response?.data?.message || "Could not check Bakong status.")
+      }
+    } finally {
+      checkingInFlightRef.current = false
+      if (showFeedback) setKhqrCheckingNow(false)
+    }
+  }
+
+  const startKhqrSession = async (curMode = khqrCurrency) => {
+    stopKhqrPolling()
+    const reqId = khqrSessionReqRef.current
+    setKhqrError(null)
+    setKhqrPaid(false)
+    setKhqrData(null)
+    setKhqrGenerating(true)
+    handledPaidRef.current = false
+    checkingInFlightRef.current = false
+    setKhqrCountdown(600)
+
+    const snapshotTotal = total
+
+    try {
+      const res = await api.post("/payments/khqr/generate", {
+        order_id: order.order_id,
+        currency: curMode,
+      })
+      if (khqrSessionReqRef.current !== reqId || handledPaidRef.current) return
+
+      const generated = res.data
+      setKhqrData(generated)
+      setKhqrGeneratedTotal(snapshotTotal)
+
+      const remainingSec = generated.expires_at
+        ? Math.max(1, Math.floor((generated.expires_at - Date.now()) / 1000))
+        : 600
+      setKhqrCountdown(remainingSec)
+
+      if (!generated.is_static && curMode !== "STATIC" && generated.md5) {
+        let attempts = 0
+        const MAX_AUTO_CHECKS = 145
+
+        const pollCheck = () => {
+          if (handledPaidRef.current || khqrSessionReqRef.current !== reqId || document.hidden) {
+            return
+          }
+          attempts += 1
+          if (attempts > MAX_AUTO_CHECKS) {
+            if (khqrPollRef.current) clearInterval(khqrPollRef.current)
+            khqrPollRef.current = null
+            return
+          }
+          checkMd5Now(generated, false, reqId)
+        }
+
+        khqrDelayRef.current = setTimeout(() => {
+          pollCheck()
+          khqrPollRef.current = setInterval(pollCheck, 4000)
+        }, 4000)
+      }
+
+      khqrCountdownRef.current = setInterval(() => {
+        setKhqrCountdown((prev) => {
+          if (prev <= 1) {
+            stopKhqrPolling()
+            setKhqrData(null)
+            setKhqrError(
+              lang === "km"
+                ? "កូដ QR បានផុតកំណត់ហើយ។ សូមជ្រើសរើសរូបិយប័ណ្ណខាងលើដើម្បីបង្កើតថ្មី។"
+                : "QR code expired. Select a currency above to generate a new one."
+            )
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+    } catch (err) {
+      if (khqrSessionReqRef.current !== reqId) return
+      if (err?.response?.status === 409 && err?.response?.data?.already_paid) {
+        finishKhqrPayment()
+      } else {
+        setKhqrError(err?.response?.data?.message || "Failed to generate KHQR code.")
+      }
+    } finally {
+      if (khqrSessionReqRef.current === reqId) {
+        setKhqrGenerating(false)
+      }
+    }
+  }
+
+  const handleKhqrCurrencySwitch = (newCur) => {
+    setKhqrCurrency(newCur)
+    startKhqrSession(newCur)
+  }
+
+  const confirmPay = async (shouldPrint = false) => {
+    if (!payMethodId) {
+      setErrorMsg("Please select a payment method.")
+      return
+    }
+    if (isCash && cashInput > 0 && isShort) {
+      setErrorMsg("Cash received is less than the order total.")
+      return
+    }
+    setPaying(true)
+    setErrorMsg("")
+    try {
+      await createPayment({ order_id: order.order_id, method_id: payMethodId })
+      if (shouldPrint) {
+        printOrderReceipt({
+          ...order,
+          status: "Paid",
+          payments: [{ method: selectedMethod || { method_name: "Cash" } }],
+        })
+      }
+      onPaid?.()
+      onClose()
+    } catch (err) {
+      setErrorMsg(err?.response?.data?.message || "Failed to process payment.")
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const confirmKHQRPay = async () => {
+    stopKhqrPolling()
+    setKhqrConfirming(true)
+    setKhqrError(null)
+    try {
+      if (khqrMethod) {
+        await createPayment({ order_id: order.order_id, method_id: khqrMethod.method_id })
+      } else if (paymentMethods[0]?.method_id) {
+        await createPayment({ order_id: order.order_id, method_id: paymentMethods[0].method_id })
+      } else {
+        await createPayment({ order_id: order.order_id, method_name: "KHQR" })
+      }
+      finishKhqrPayment()
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        finishKhqrPayment()
+      } else {
+        setKhqrError(err?.response?.data?.message || "Failed to confirm payment.")
+      }
+    } finally {
+      setKhqrConfirming(false)
+    }
+  }
+
+  const switchMode = (mode) => {
+    if (mode === "normal") {
+      stopKhqrPolling()
+      setKhqrData(null)
+      setKhqrError(null)
+      setPayMode("normal")
+    } else {
+      setPayMode("khqr")
+      startKhqrSession(khqrCurrency)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4"
+      onClick={() => !paying && !khqrConfirming && handleClose()}
+    >
+      <div
+        className="bg-[var(--color-surface)] rounded-3xl shadow-2xl w-full max-w-md border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[92dvh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 bg-[var(--color-surface-subtle)]/80 border-b border-[var(--color-border)] shrink-0">
+          <div>
+            <div className="font-bold text-sm text-[var(--color-text)]">
+              {t("common.order")} #{String(order.order_id).padStart(4, "0")}
+            </div>
+            <div className="text-xs text-[var(--color-muted)]">
+              {t("common.table")} {order.table?.table_number || "—"} · {itemCount}{" "}
+              {t("station.items")} ·{" "}
+              {new Date(order.order_date).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close payment dialog"
+            className="p-1.5 rounded-xl hover:bg-[var(--color-border)]/60 text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Amount Showcase */}
+        <div className="text-center px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-primary-muted)]/35 shrink-0">
+          <div className="text-[11px] font-semibold text-[var(--color-muted)] uppercase tracking-wider">
+            {t("pay.totalToCollect")}
+          </div>
+          <div className="font-display text-3xl font-bold text-[var(--color-text)] mt-0.5 tabular-nums">
+            {formatUSD(total)}
+          </div>
+          <div className="text-sm font-semibold text-[var(--color-primary)] tabular-nums">
+            {formatKHR(total)}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Mode Switcher */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-[var(--color-surface-subtle)] border border-[var(--color-border)] rounded-2xl">
+            <button
+              type="button"
+              onClick={() => switchMode("normal")}
+              className={cn(
+                "flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer",
+                payMode === "normal"
+                  ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-xs"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+              )}
+            >
+              <CreditCard size={15} /> {t("pay.cashCard")}
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("khqr")}
+              className={cn(
+                "flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer",
+                payMode === "khqr"
+                  ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-xs"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+              )}
+            >
+              <QrCode size={15} /> {t("pay.khqr")}
+            </button>
+          </div>
+
+          {payMode === "normal" ? (
+            <>
+              <div className="rounded-2xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]/70 max-h-36 overflow-y-auto">
+                {order.order_items?.map((oi) => (
+                  <div
+                    key={oi.order_item_id}
+                    className="flex items-center justify-between px-3.5 py-2 text-xs sm:text-sm"
+                  >
+                    <span className="text-[var(--color-text)] truncate pr-2">
+                      <span className="font-bold text-[var(--color-muted)] mr-1.5">
+                        {oi.quantity}×
+                      </span>
+                      {menuItemName(oi.menu_item, lang)}
+                    </span>
+                    <span className="text-[var(--color-muted)] tabular-nums shrink-0">
+                      {formatUSD(Number(oi.unit_price) * oi.quantity)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-2">
+                  {t("pay.method")}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {(normalMethods.length > 0 ? normalMethods : paymentMethods).map((m) => (
+                    <button
+                      key={m.method_id}
+                      type="button"
+                      onClick={() => setPayMethodId(m.method_id)}
+                      className={cn(
+                        "flex items-center gap-2.5 p-3 rounded-2xl border-2 text-sm font-semibold transition-all min-h-[50px] cursor-pointer",
+                        payMethodId === m.method_id
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+                          : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/40"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0",
+                          payMethodId === m.method_id
+                            ? "bg-[var(--color-primary)] text-white"
+                            : "bg-[var(--color-surface-subtle)] text-[var(--color-primary)]"
+                        )}
+                      >
+                        {m.method_name.charAt(0)}
+                      </div>
+                      <span className="truncate">{m.method_name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {isCash && (
+                <div className="space-y-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)]/50 p-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+                      {t("pay.cashReceived")}
+                    </div>
+                    <div className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                      {["USD", "KHR"].map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => {
+                            setCashCur(c)
+                            setCashGiven("")
+                          }}
+                          className={cn(
+                            "px-3 py-1 text-xs font-bold transition-colors cursor-pointer",
+                            cashCur === c
+                              ? "bg-[var(--color-primary)] text-white"
+                              : "text-[var(--color-text-secondary)]"
+                          )}
+                        >
+                          {c === "USD" ? "$" : "៛"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] text-lg font-bold">
+                      {cashCur === "USD" ? "$" : "៛"}
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step={cashCur === "USD" ? "0.01" : "100"}
+                      value={cashGiven}
+                      onChange={(e) => setCashGiven(e.target.value)}
+                      placeholder={cashCur === "USD" ? "0.00" : "0"}
+                      className="w-full h-12 pl-9 pr-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-lg font-bold text-[var(--color-text)] tabular-nums outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+                    />
+                  </div>
+
+                  <div className="flex gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCashGiven(cashCur === "KHR" ? String(totalInCur) : total.toFixed(2))
+                      }
+                      className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] cursor-pointer"
+                    >
+                      {t("pay.exact")}
+                    </button>
+                    {(cashCur === "USD"
+                      ? [1, 5, 10, 20, 50, 100].filter((v) => v >= total)
+                      : [5000, 10000, 20000, 50000, 100000].filter((v) => v >= totalInCur)
+                    )
+                      .slice(0, 4)
+                      .map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setCashGiven(String(v))}
+                          className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] cursor-pointer tabular-nums"
+                        >
+                          {cashCur === "USD" ? `$${v}` : `៛${v.toLocaleString()}`}
+                        </button>
+                      ))}
+                  </div>
+
+                  <div
+                    className={cn(
+                      "rounded-xl px-3.5 py-2.5 flex items-center justify-between",
+                      cashInput === 0
+                        ? "bg-[var(--color-surface)] border border-[var(--color-border)]"
+                        : isShort
+                          ? "bg-[var(--color-danger-muted)]"
+                          : "bg-[var(--color-primary-muted)]"
+                    )}
+                  >
+                    <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
+                      {t("pay.change")}
+                    </span>
+                    {cashInput === 0 ? (
+                      <span className="text-sm text-[var(--color-muted)]">—</span>
+                    ) : isShort ? (
+                      <span className="text-sm font-bold text-[var(--color-danger)] tabular-nums">
+                        {t("pay.short")} {fmt(Math.abs(change))}
+                      </span>
+                    ) : (
+                      <span className="text-lg font-bold text-[var(--color-primary)] tabular-nums">
+                        {fmt(Math.max(0, change))}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div
+                  role="alert"
+                  className="text-xs font-medium text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3.5 py-2.5"
+                >
+                  {errorMsg}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {!khqrPaid && (
+                <div className="space-y-3">
+                  {/* Currency / Static Switcher */}
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { key: "KHR", label: formatKHR(total) },
+                      { key: "USD", label: formatUSD(total) },
+                      { key: "STATIC", label: lang === "km" ? "QR ថេរ" : "Static QR" },
+                    ].map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => handleKhqrCurrencySwitch(key)}
+                        className={cn(
+                          "py-2 px-2 rounded-xl text-xs font-bold border-2 transition-all cursor-pointer tabular-nums",
+                          khqrCurrency === key
+                            ? "border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+                            : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/40"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {khqrGenerating && !khqrData && (
+                    <div className="flex flex-col items-center justify-center py-12 text-xs text-[var(--color-muted)] gap-2">
+                      <Loader2 size={24} className="animate-spin text-[var(--color-primary)]" />
+                      <span>{t("pay.generating")}</span>
+                    </div>
+                  )}
+
+                  {khqrData && (
+                    <div className="text-center space-y-2.5">
+                      <div className="mx-auto max-w-[244px] bg-white rounded-2xl border-2 border-[#e11d48] overflow-hidden shadow-md">
+                        <div className="bg-[#e11d48] text-white py-2 px-3 font-black text-sm tracking-widest">
+                          KHQR
+                        </div>
+                        <div className="px-4 pt-2.5 pb-1.5 text-left border-b border-dashed border-slate-200">
+                          <div className="text-[11px] font-bold text-slate-600 uppercase truncate">
+                            {khqrData.merchant_name || "ZOOM Garden Café & Wine"}
+                          </div>
+                          <div className="text-base font-black text-slate-900 tabular-nums">
+                            {khqrData.is_static || khqrCurrency === "STATIC"
+                              ? `${formatKHR(total)} / ${formatUSD(total)}`
+                              : khqrData.currency === "USD"
+                                ? formatUSD(khqrData.amount)
+                                : `៛${Number(khqrData.amount).toLocaleString()}`}
+                          </div>
+                        </div>
+                        <div className="p-3 flex justify-center bg-white">
+                          <QRCodeSVG value={khqrData.qr} size={185} level="M" />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-center gap-3 text-xs text-[var(--color-muted)]">
+                        <span className="inline-flex items-center gap-1.5 tabular-nums">
+                          <Loader2 size={12} className="animate-spin" /> {t("pay.waiting")}{" "}
+                          {Math.floor(khqrCountdown / 60)}:
+                          {String(khqrCountdown % 60).padStart(2, "0")}
+                        </span>
+                        {!khqrData.is_static && khqrCurrency !== "STATIC" && (
+                          <button
+                            type="button"
+                            onClick={() => checkMd5Now(khqrData, true)}
+                            disabled={khqrCheckingNow}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw
+                              size={12}
+                              className={cn(khqrCheckingNow && "animate-spin")}
+                            />
+                            {lang === "km" ? "ពិនិត្យឥឡូវ" : "Check Now"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {khqrError && (
+                    <div className="space-y-2 text-xs text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3.5 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1.5 font-medium">
+                        <AlertTriangle size={13} className="shrink-0" />
+                        <span>{khqrError}</span>
+                      </div>
+                      {!khqrData && (
+                        <button
+                          type="button"
+                          onClick={() => startKhqrSession(khqrCurrency)}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-primary)] hover:underline cursor-pointer"
+                        >
+                          <RefreshCw size={12} /> {t("pay.generateQr")}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {khqrPaid && (
+                <div className="text-center space-y-3 py-6">
+                  <div className="w-16 h-16 rounded-2xl bg-[var(--color-primary-muted)] flex items-center justify-center mx-auto">
+                    <Check size={32} className="text-[var(--color-primary)]" />
+                  </div>
+                  <div className="font-display font-bold text-xl text-[var(--color-primary)]">
+                    {t("pay.confirmed")}
+                  </div>
+                  <div className="text-xs text-[var(--color-muted)]">{t("pay.markedPaid")}</div>
+                  <div className="pt-2 flex gap-2 justify-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printOrderReceipt({
+                          ...order,
+                          status: "Paid",
+                          payments: [{ method: khqrMethod || { method_name: "KHQR" } }],
+                        })
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-xs font-bold flex items-center gap-1.5 shadow-xs hover:bg-[var(--color-primary-dark)] transition-colors cursor-pointer"
+                    >
+                      <Printer size={14} /> {t("cashier.printReceipt")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClose}
+                      className="px-4 py-2.5 rounded-xl border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] transition-colors cursor-pointer"
+                    >
+                      {t("common.close")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        {!khqrPaid && (
+          <div className="px-5 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
+            {payMode === "normal" ? (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  disabled={paying}
+                  className="px-4 py-3 rounded-xl border border-[var(--color-border)] text-xs sm:text-sm font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] transition-colors disabled:opacity-60 cursor-pointer"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => confirmPay(false)}
+                  disabled={paying || (isCash && cashInput > 0 && isShort)}
+                  className="flex-1 py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] text-xs sm:text-sm font-bold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 cursor-pointer"
+                >
+                  {paying ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                  <span className="truncate">
+                    {paying ? t("pay.processing") : `${t("pay.charge")} ${formatUSD(total)}`}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => confirmPay(true)}
+                  disabled={paying || (isCash && cashInput > 0 && isShort)}
+                  className="flex-[1.15] py-3 rounded-xl bg-[var(--color-primary)] text-white text-xs sm:text-sm font-bold hover:bg-[var(--color-primary-dark)] transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 cursor-pointer shadow-xs"
+                >
+                  <Printer size={15} />
+                  <span>{lang === "km" ? "គិត & បោះពុម្ព" : "Pay & Print"}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={confirmKHQRPay}
+                  disabled={khqrConfirming}
+                  className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white text-sm font-bold hover:bg-[var(--color-primary-dark)] transition-colors flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer shadow-xs"
+                >
+                  {khqrConfirming ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> {t("pay.confirming")}
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} /> {t("pay.customerPaid")}
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-sm font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] transition-colors cursor-pointer"
+                >
+                  {t("common.cancel")}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+### 10. `frontend/src/pages/cashier/CashierOrders.jsx`
+Live-synced `activePayOrder`, debounced socket updates (`280ms`), clean filterable POS order cards, elapsed timers, and bilingual delete/scan messages.
+
+```jsx
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { Search, QrCode, X, ShoppingBag } from "lucide-react"
+import { cn, menuItemMatchesSearch, menuItemName } from "@/lib/utils"
+import { formatUSD, orderTotal } from "@/lib/currency"
+import { useOrderStore } from "../../context/orderContext"
+import { usePaymentStore } from "../../context/paymentContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import { useLang } from "@/i18n/LanguageContext"
+import { ConfirmModal, EmptyState, LoadingState } from "@/components/shared"
+import ReceiptScanner from "@/components/cashier/ReceiptScanner"
+import ActiveOrdersTable from "@/components/cashier/ActiveOrdersTable"
+import ViewOrderDialog from "@/components/cashier/ViewOrderDialog"
+import PaymentDialog from "@/components/cashier/PaymentDialog"
+
+export default function CashierOrders() {
+  const { t, lang } = useLang()
+  usePageTitle("Order Management")
+  const {
+    orders,
+    fetchOrders,
+    deleteOrder,
+    deleteOrderItem,
+    updateOrderItemQuantity,
+    updateOrderItemNote,
+    isLoading,
+  } = useOrderStore()
+  const { paymentMethods, fetchPaymentMethods } = usePaymentStore()
+
+  const [payOrderId, setPayOrderId] = useState(null)
+  const [viewOrderId, setViewOrderId] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const [search, setSearch] = useState("")
+  const [statusTab, setStatusTab] = useState("all") // "all" | "Served" | "Preparing" | "Pending"
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scanError, setScanError] = useState("")
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  const refetchTimerRef = useRef(null)
+
+  useSocketRole("cashier")
+
+  // Debounce bursts of order_item events into a single refresh
+  const scheduleFetchOrders = useCallback(() => {
+    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    refetchTimerRef.current = setTimeout(() => {
+      refetchTimerRef.current = null
+      fetchOrders().catch(() => {})
+    }, 280)
+  }, [fetchOrders])
+
+  useEffect(() => {
+    fetchOrders().catch(() => {})
+    fetchPaymentMethods().catch(() => {})
+    const poll = setInterval(() => fetchOrders().catch(() => {}), 60000)
+    const clock = setInterval(() => setNowMs(Date.now()), 30000)
+    return () => {
+      clearInterval(poll)
+      clearInterval(clock)
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    }
+  }, [fetchOrders, fetchPaymentMethods])
+
+  useSocketEvent("order:new", scheduleFetchOrders)
+  useSocketEvent("order:status_changed", scheduleFetchOrders)
+  useSocketEvent("order:deleted", scheduleFetchOrders)
+  useSocketEvent("order_item:new", scheduleFetchOrders)
+  useSocketEvent("order_item:status_changed", scheduleFetchOrders)
+  useSocketEvent("order_item:deleted", scheduleFetchOrders)
+  useSocketEvent("order_item:updated", scheduleFetchOrders)
+  useSocketEvent("order_item:note_changed", scheduleFetchOrders)
+  useSocketEvent("payment:completed", scheduleFetchOrders)
+
+  const activeOrders = useMemo(
+    () => (orders || []).filter((o) => !(o.is_paid ?? o.status === "Paid")),
+    [orders]
+  )
+
+  // Always derive both modal orders from live store so totals/items are never stale
+  const activeViewOrder = useMemo(
+    () => (viewOrderId ? orders.find((o) => o.order_id === viewOrderId) || null : null),
+    [orders, viewOrderId]
+  )
+  const activePayOrder = useMemo(
+    () => (payOrderId ? orders.find((o) => o.order_id === payOrderId) || null : null),
+    [orders, payOrderId]
+  )
+
+  const requestDeleteOrder = (order) => {
+    setDeleteError("")
+    setDeleteTarget({ type: "order", order })
+  }
+
+  const requestDeleteItem = (order, item) => {
+    setDeleteError("")
+    setDeleteTarget({ type: "item", order, item })
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      if (deleteTarget.type === "order") {
+        await deleteOrder(deleteTarget.order.order_id)
+        if (viewOrderId === deleteTarget.order.order_id) setViewOrderId(null)
+        if (payOrderId === deleteTarget.order.order_id) setPayOrderId(null)
+      } else {
+        const res = await deleteOrderItem(deleteTarget.item.order_item_id)
+        if (res?.orderDeleted) {
+          if (viewOrderId === deleteTarget.order.order_id) setViewOrderId(null)
+          if (payOrderId === deleteTarget.order.order_id) setPayOrderId(null)
+        }
+      }
+      await fetchOrders()
+      setDeleteTarget(null)
+    } catch (err) {
+      setDeleteError(err?.response?.data?.message || t("common.failed"))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleReceiptFound = (orderId) => {
+    setScannerOpen(false)
+    const code = `#${String(orderId).padStart(4, "0")}`
+    const found = orders.find((o) => o.order_id === orderId)
+    if (!found) {
+      setScanError(
+        lang === "km" ? `រកមិនឃើញការកុម្ម៉ង់ ${code} ទេ។` : `Order ${code} not found.`
+      )
+      return
+    }
+    if (found.is_paid ?? found.status === "Paid") {
+      setScanError(
+        lang === "km"
+          ? `ការកុម្ម៉ង់ ${code} ត្រូវបានទូទាត់ប្រាក់រួចហើយ។`
+          : `Order ${code} has already been paid.`
+      )
+      return
+    }
+    setScanError("")
+    setPayOrderId(found.order_id)
+  }
+
+  const searchQuery = search.trim().toLowerCase()
+  const searchDigits = searchQuery.replace(/\D/g, "")
+  const searchAsNumber = searchDigits ? parseInt(searchDigits, 10) : null
+
+  const searchedOrders = useMemo(() => {
+    if (!searchQuery) return activeOrders
+    return activeOrders.filter((o) => {
+      const orderIdStr = String(o.order_id)
+      const padded = orderIdStr.padStart(4, "0")
+      if (
+        (searchAsNumber !== null && o.order_id === searchAsNumber) ||
+        orderIdStr.includes(searchQuery) ||
+        padded.includes(searchQuery) ||
+        `#${orderIdStr}`.includes(searchQuery) ||
+        `#${padded}`.includes(searchQuery) ||
+        `ord-${padded}`.includes(searchQuery) ||
+        `ord-${orderIdStr}`.includes(searchQuery)
+      ) {
+        return true
+      }
+      if (searchAsNumber !== null && o.queue_number === searchAsNumber) return true
+      const tableNum = String(o.table?.table_number ?? "").toLowerCase()
+      if (tableNum && (tableNum.includes(searchQuery) || `table ${tableNum}`.includes(searchQuery))) {
+        return true
+      }
+      if (o.note && o.note.toLowerCase().includes(searchQuery)) return true
+      if (o.order_items?.some((oi) => menuItemMatchesSearch(oi.menu_item, searchQuery))) return true
+      return false
+    })
+  }, [activeOrders, searchQuery, searchAsNumber])
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === "Enter" && searchQuery) {
+      if (searchedOrders.length === 1) {
+        setPayOrderId(searchedOrders[0].order_id)
+      } else if (searchAsNumber !== null) {
+        const exact = activeOrders.find((o) => o.order_id === searchAsNumber)
+        if (exact) setPayOrderId(exact.order_id)
+      }
+    }
+  }
+
+  const stats = useMemo(
+    () => ({
+      active: activeOrders.length,
+      pending: activeOrders.filter((o) => o.status === "Pending").length,
+      cooking: activeOrders.filter((o) => o.status === "Preparing").length,
+      ready: activeOrders.filter((o) => o.status === "Served").length,
+      total: activeOrders.reduce((s, o) => s + orderTotal(o), 0),
+    }),
+    [activeOrders]
+  )
+
+  const grouped = useMemo(
+    () => ({
+      Served: searchedOrders.filter((o) => o.status === "Served"),
+      Preparing: searchedOrders.filter((o) => o.status === "Preparing"),
+      Pending: searchedOrders.filter((o) => o.status === "Pending"),
+    }),
+    [searchedOrders]
+  )
+
+  const sectionConfig = [
+    {
+      key: "Served",
+      label: t("cashier.readyForPayment"),
+      sub: `${grouped.Served.length} ${t("cashier.orders")}`,
+      accent: "text-[var(--color-primary)]",
+      dot: "bg-[var(--color-primary)]",
+    },
+    {
+      key: "Preparing",
+      label: t("cashier.beingPrepared"),
+      sub: `${grouped.Preparing.length} ${t("cashier.ordersInKitchen")}`,
+      accent: "text-[var(--color-warning)]",
+      dot: "bg-[var(--color-warning)]",
+    },
+    {
+      key: "Pending",
+      label: t("cashier.newOrders"),
+      sub: `${grouped.Pending.length} ${t("cashier.ordersWaiting")}`,
+      accent: "text-[var(--color-text-secondary)]",
+      dot: "bg-[var(--color-muted)]",
+    },
+  ].filter((sec) => statusTab === "all" || sec.key === statusTab)
+
+  const visibleCount = sectionConfig.reduce((s, sec) => s + grouped[sec.key].length, 0)
+
+  const deleteCode = deleteTarget?.order
+    ? `#${String(deleteTarget.order.order_id).padStart(4, "0")}`
+    : ""
+
+  return (
+    <div className="space-y-5">
+      {/* Top Toolbar: Search + Scan + Live Unpaid Total */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-1">
+          <div className="relative flex-1 max-w-md">
+            <Search
+              size={15}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+            />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder={t("cashier.searchPlaceholder")}
+              className="w-full h-10 pl-10 pr-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)] transition-all"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setScanError("")
+              setScannerOpen(true)
+            }}
+            className="flex items-center gap-2 h-10 px-3.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs sm:text-sm font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors shrink-0 cursor-pointer"
+          >
+            <QrCode size={15} />
+            <span className="hidden sm:inline">{t("cashier.scanReceipt")}</span>
+          </button>
+        </div>
+
+        {/* Calm Unpaid Summary Pill */}
+        <div className="inline-flex items-center gap-3 px-4 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] self-start sm:self-auto">
+          <span className="text-xs text-[var(--color-muted)]">
+            {stats.active} {t("cashier.statActive")}
+          </span>
+          <span className="h-4 w-px bg-[var(--color-border)]" />
+          <span className="text-sm font-bold text-[var(--color-primary)] tabular-nums">
+            {formatUSD(stats.total)}
+          </span>
+        </div>
+      </div>
+
+      {scanError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-2 text-xs sm:text-sm text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-4 py-2.5"
+        >
+          <span>{scanError}</span>
+          <button
+            type="button"
+            onClick={() => setScanError("")}
+            aria-label="Dismiss scan error"
+            className="p-1 hover:opacity-75 cursor-pointer"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Clean Interactive Status Filter Tabs */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        {[
+          { key: "all", label: t("common.all"), count: stats.active },
+          { key: "Served", label: t("status.ready"), count: stats.ready, dot: "bg-[var(--color-primary)]" },
+          { key: "Preparing", label: t("status.cooking"), count: stats.cooking, dot: "bg-[var(--color-warning)]" },
+          { key: "Pending", label: t("status.pending"), count: stats.pending, dot: "bg-[var(--color-muted)]" },
+        ].map(({ key, label, count, dot }) => {
+          const active = statusTab === key
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setStatusTab(key)}
+              className={cn(
+                "shrink-0 inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer",
+                active
+                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40"
+              )}
+            >
+              {dot && !active && <span className={cn("w-2 h-2 rounded-full", dot)} />}
+              <span>{label}</span>
+              <span
+                className={cn(
+                  "text-[11px] px-1.5 py-0.5 rounded-full font-bold tabular-nums",
+                  active
+                    ? "bg-white/20 text-white"
+                    : "bg-[var(--color-surface-subtle)] text-[var(--color-text)]"
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Orders Grid Sections */}
+      {isLoading && activeOrders.length === 0 ? (
+        <LoadingState text={t("cashier.loadingOrders")} />
+      ) : activeOrders.length === 0 ? (
+        <EmptyState icon={ShoppingBag} text={t("cashier.noActiveOrders")} />
+      ) : visibleCount === 0 ? (
+        <EmptyState
+          icon={ShoppingBag}
+          text={
+            searchQuery
+              ? `${t("cashier.noMatchingOrders")} "${searchQuery}".`
+              : t("cashier.noActiveOrders")
+          }
+        />
+      ) : (
+        <div className="space-y-6">
+          {sectionConfig.map(
+            ({ key, label, sub, accent, dot }) =>
+              grouped[key].length > 0 && (
+                <section key={key} className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className={cn("w-2.5 h-2.5 rounded-full", dot)} />
+                    <h2 className={cn("font-semibold text-sm", accent)}>{label}</h2>
+                    <span className="text-xs text-[var(--color-muted)]">· {sub}</span>
+                  </div>
+                  <ActiveOrdersTable
+                    orders={grouped[key]}
+                    nowMs={nowMs}
+                    onPay={(ord) => setPayOrderId(ord.order_id)}
+                    onView={(ord) => setViewOrderId(ord.order_id)}
+                    onDelete={requestDeleteOrder}
+                  />
+                </section>
+              )
+          )}
+        </div>
+      )}
+
+      <ViewOrderDialog
+        order={deleteTarget ? null : activeViewOrder}
+        onClose={() => setViewOrderId(null)}
+        onDeleteItem={requestDeleteItem}
+        onUpdateItemQty={updateOrderItemQuantity}
+        onUpdateItemNote={updateOrderItemNote}
+      />
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        busy={deleting}
+        danger
+        title={
+          deleteTarget?.type === "order"
+            ? lang === "km"
+              ? `លុបការកុម្ម៉ង់ ${deleteCode}?`
+              : `Delete Order ${deleteCode}?`
+            : lang === "km"
+              ? "ដកមុខម្ហូបចេញពីការកុម្ម៉ង់?"
+              : "Remove Order Item?"
+        }
+        message={
+          deleteTarget?.type === "order"
+            ? lang === "km"
+              ? `លុបការកុម្ម៉ង់មិនទាន់ទូទាត់ ${deleteCode} (តុ ${deleteTarget.order.table?.table_number || "—"})? មិនអាចត្រឡប់វិញបានទេ។`
+              : `Delete unpaid Order ${deleteCode} (Table ${deleteTarget.order.table?.table_number || "—"})? This cannot be undone.`
+            : deleteTarget?.item
+              ? lang === "km"
+                ? `ដក ${menuItemName(deleteTarget.item.menu_item, lang)} (×${deleteTarget.item.quantity}) ចេញពីការកុម្ម៉ង់ ${deleteCode}?`
+                : `Remove ${menuItemName(deleteTarget.item.menu_item, lang)} (×${deleteTarget.item.quantity}) from Order ${deleteCode}?`
+              : ""
+        }
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        errorMsg={deleteError}
+      />
+
+      <PaymentDialog
+        order={activePayOrder}
+        paymentMethods={paymentMethods}
+        onClose={() => setPayOrderId(null)}
+        onPaid={fetchOrders}
+      />
+
+      {scannerOpen && (
+        <ReceiptScanner
+          onFound={handleReceiptFound}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+Try out the new split-screen Cashier POS and card-based Order Board, then reply **"Phase 4"** when you're ready for the **Kitchen & Barista KDS Ticket Board, Double-Tap Lock, Live Timers & Station Menu/Stock**!

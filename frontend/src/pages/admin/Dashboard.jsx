@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useRef } from "react"
 import { RefreshCw } from "lucide-react"
 import { useDashboardStore } from "../../context/dashboardContext"
 import { usePageTitle } from "../../hooks/usePageTitle"
@@ -16,57 +16,71 @@ export default function Dashboard() {
     topSellingItems,
     peakHours,
     isLoading,
-    fetchDailyRevenue,
-    fetchWeeklyRevenue,
-    fetchMonthlyRevenue,
-    fetchTopSelling,
-    fetchPeakHours,
+    fetchAll,
   } = useDashboardStore()
 
-  const refreshAll = useCallback(() => {
-    fetchTopSelling()
-    fetchPeakHours()
-    fetchDailyRevenue()
-    fetchWeeklyRevenue()
-    fetchMonthlyRevenue()
-  }, [fetchDailyRevenue, fetchWeeklyRevenue, fetchMonthlyRevenue, fetchTopSelling, fetchPeakHours])
+  const refreshTimerRef = useRef(null)
+
+  const refreshNow = useCallback(() => {
+    fetchAll()
+  }, [fetchAll])
+
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null
+      fetchAll()
+    }, 400)
+  }, [fetchAll])
 
   useEffect(() => {
-    refreshAll()
-  }, [refreshAll])
+    refreshNow()
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    }
+  }, [refreshNow])
 
   useSocketRole("admin")
-  useSocketEvent("payment:completed", refreshAll)
-  useSocketEvent("order:new", refreshAll)
-  useSocketEvent("order:status_changed", refreshAll)
+  useSocketEvent("payment:completed", scheduleRefresh)
+  useSocketEvent("order:new", scheduleRefresh)
+  useSocketEvent("order:status_changed", scheduleRefresh)
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">{t("dashboard.title")}</h1>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[var(--color-primary-muted)] text-[var(--color-primary)]">
+            <h1 className="text-2xl font-display font-bold text-[var(--color-text)]">
+              {t("dashboard.title")}
+            </h1>
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-[var(--color-primary-muted)] text-[var(--color-primary)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] animate-pulse" />
               {t("tables.live")}
             </span>
           </div>
-          <p className="text-sm text-[var(--color-muted)] mt-1">{t("dashboard.subtitle")}</p>
+          <p className="text-xs sm:text-sm text-[var(--color-muted)] mt-1">
+            {t("dashboard.subtitle")}
+          </p>
         </div>
 
         <button
-          onClick={refreshAll}
+          type="button"
+          onClick={refreshNow}
           disabled={isLoading}
-          className="self-start sm:self-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 text-xs font-semibold text-[var(--color-text-secondary)] transition-all cursor-pointer"
+          className="self-start sm:self-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 text-xs font-semibold text-[var(--color-text-secondary)] transition-all cursor-pointer disabled:opacity-55"
         >
           <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
-          {t("guest.refresh")}
+          <span>{t("guest.refresh")}</span>
         </button>
       </div>
 
-      <RevenueStats dailyRevenue={dailyRevenue} weeklyRevenue={weeklyRevenue} monthlyRevenue={monthlyRevenue} />
+      <RevenueStats
+        dailyRevenue={dailyRevenue}
+        weeklyRevenue={weeklyRevenue}
+        monthlyRevenue={monthlyRevenue}
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
         <TopSellingTable topSellingItems={topSellingItems} />
         <PeakHoursCard peakHours={peakHours} />
       </div>

@@ -1,0 +1,1479 @@
+Here is **Phase 4: Kitchen & Barista KDS Ticket Board, Station Menu & Stock, and De-duplicated Live Notifications**.
+
+### What's improved in Phase 4
+- **De-duplicated & Debounced Station Socket Fetching (`useStaffNotifications.js`):**
+  - Collapses multi-item order bursts into **1 single 250ms-debounced queue fetch** (eliminating the ~12 duplicate fetches per order), also listens for `order_item:updated` and `order_item:note_changed` (cashier edits), and cleans up bell timers on unmount.
+- **Real Multi-Column KDS Board (`StationOrders.jsx`):**
+  - Open **2–3 column ticket grid** (tickets start **expanded** by default so chefs/baristas immediately see every dish without tapping, plus an Expand/Compact toggle).
+  - **Live elapsed-time wait timers** (`3m`, `12m`, `24m`) that automatically shift to **amber at 10m** and **red at 20m**.
+  - **Double-tap lock** on both whole-ticket and per-item action buttons so busy touchscreens never skip statuses or fire duplicate PATCH calls.
+  - **Per-item status pills + individual item bump buttons** (great when a table adds a 2nd round of `Pending` items to an already `Preparing` ticket).
+  - Unmistakable full-width red **Allergy Warning Banner** (supports both English & Khmer `អាលែកហ្ស៊ី`).
+- **Upgraded Station Menu (`StationMenu.jsx`):**
+  - One-tap **horizontal category pills** + **All / Available / Sold Out** filter tabs with live counts, cleaner toggle controls, and USD/KHR display.
+- **Upgraded Station Stock (`StationStock.jsx`):**
+  - Search bar + **Low Stock Only** filter, compact card layout, quick quantity steppers (`+0.5`, `+1`, `+5`), live **remaining stock preview**, and full English/Khmer copy.
+- **Accessible Shared Modal (`shared/Modal.jsx`):** Adds `Escape` key closing, scroll lock, and `aria-label`.
+
+---
+
+### 1. `frontend/src/hooks/useStaffNotifications.js`
+
+```js
+import { useState, useCallback, useEffect, useRef } from "react"
+import { useSocketRole, useSocketEvent } from "../services/socket"
+import { useOrderItemStore } from "../context/orderItemContext"
+
+let sharedAudioCtx = null
+let lastSoundPlayedAt = 0
+const SOUND_COOLDOWN_MS = 3500
+const ORDER_BATCH_WINDOW_MS = 8000
+const recentOrderRingMap = new Map()
+
+function shouldRingForOrder(orderId, eventGroup = "new") {
+  const now = Date.now()
+  for (const [k, ts] of recentOrderRingMap.entries()) {
+    if (now - ts > ORDER_BATCH_WINDOW_MS) {
+      recentOrderRingMap.delete(k)
+    }
+  }
+  if (!orderId) return true
+  const key = `${eventGroup}:${orderId}`
+  const prev = recentOrderRingMap.get(key)
+  recentOrderRingMap.set(key, now)
+  if (prev && now - prev < ORDER_BATCH_WINDOW_MS) {
+    return false
+  }
+  return true
+}
+
+function getAudioContext() {
+  if (!sharedAudioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return null
+    sharedAudioCtx = new Ctx()
+  }
+  return sharedAudioCtx
+}
+
+export function isAudioUnlocked() {
+  return !!sharedAudioCtx && sharedAudioCtx.state === "running"
+}
+
+export function unlockAudioNow() {
+  try {
+    const ctx = getAudioContext()
+    if (!ctx) return
+    if (ctx.state === "suspended") {
+      ctx.resume().then(() => playAlertSound({ force: true })).catch(() => {})
+    } else {
+      playAlertSound({ force: true })
+    }
+  } catch (err) {
+    console.warn("Could not unlock audio:", err)
+  }
+}
+
+export function playAlertSound({ force = false } = {}) {
+  try {
+    const nowMs = Date.now()
+    if (!force && nowMs - lastSoundPlayedAt < SOUND_COOLDOWN_MS) {
+      return
+    }
+    lastSoundPlayedAt = nowMs
+
+    const ctx = getAudioContext()
+    if (!ctx) return
+
+    const scheduleChime = () => {
+      const playTone = (freq, startTime, duration, volume = 0.5) => {
+        try {
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.connect(gain)
+          gain.connect(ctx.destination)
+          osc.frequency.value = freq
+          osc.type = "sine"
+          const t0 = Math.max(startTime, ctx.currentTime + 0.01)
+          gain.gain.setValueAtTime(volume, t0)
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration)
+          osc.start(t0)
+          osc.stop(t0 + duration)
+        } catch {}
+      }
+      const now = ctx.currentTime + 0.02
+      playTone(880, now, 0.22)
+      playTone(1175, now + 0.24, 0.32)
+    }
+
+    if (ctx.state === "suspended") {
+      ctx.resume().then(scheduleChime).catch(() => {})
+    } else {
+      scheduleChime()
+    }
+  } catch (err) {
+    console.warn("Could not play alert sound:", err)
+  }
+}
+
+export function unlockAudioOnFirstInteraction() {
+  const unlock = () => {
+    try {
+      const ctx = getAudioContext()
+      if (ctx) {
+        if (ctx.state === "suspended") ctx.resume()
+        const buffer = ctx.createBuffer(1, 1, 22050)
+        const source = ctx.createBufferSource()
+        source.buffer = buffer
+        source.connect(ctx.destination)
+        source.start(0)
+      }
+    } catch {}
+    window.removeEventListener("click", unlock)
+    window.removeEventListener("keydown", unlock)
+    window.removeEventListener("touchstart", unlock)
+  }
+  window.addEventListener("click", unlock, { once: true })
+  window.addEventListener("keydown", unlock, { once: true })
+  window.addEventListener("touchstart", unlock, { once: true })
+}
+
+export function useStaffNotifications(role) {
+  const { connected } = useSocketRole(role)
+  const [bellRinging, setBellRinging] = useState(false)
+  const bellTimerRef = useRef(null)
+  const refetchTimerRef = useRef(null)
+
+  const { kitchenQueue, baristaQueue, fetchKitchenQueue, fetchBaristaQueue } =
+    useOrderItemStore()
+
+  // Single debounced queue refresh shared by Layout bell + StationOrders
+  const scheduleQueueFetch = useCallback(() => {
+    if (role !== "kitchen" && role !== "barista") return
+    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+    refetchTimerRef.current = setTimeout(() => {
+      refetchTimerRef.current = null
+      if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+      if (role === "barista") fetchBaristaQueue().catch(() => {})
+    }, 250)
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
+
+  useEffect(() => {
+    if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+    if (role === "barista") fetchBaristaQueue().catch(() => {})
+    return () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current)
+      if (bellTimerRef.current) clearTimeout(bellTimerRef.current)
+    }
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
+
+  const ring = useCallback(() => {
+    setBellRinging(true)
+    playAlertSound()
+    if (bellTimerRef.current) clearTimeout(bellTimerRef.current)
+    bellTimerRef.current = setTimeout(() => {
+      bellTimerRef.current = null
+      setBellRinging(false)
+    }, 2000)
+  }, [])
+
+  const ringForOrder = useCallback(
+    (orderId, eventGroup = "new") => {
+      if (!shouldRingForOrder(orderId, eventGroup)) return
+      ring()
+    },
+    [ring]
+  )
+
+  useSocketEvent("order:new", (order) => {
+    const orderId = order?.order_id
+    if (role === "cashier") {
+      ringForOrder(orderId, "new")
+    }
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
+      ringForOrder(orderId, "new")
+    }
+  })
+
+  useSocketEvent("order:confirmed", (order) => {
+    const orderId = order?.order_id
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
+      ringForOrder(orderId, "new")
+    }
+  })
+
+  useSocketEvent("order:deleted", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:new", (item) => {
+    const orderId = item?.order_id ?? item?.order?.order_id
+    if (role === "cashier") {
+      ringForOrder(orderId, "new")
+    }
+    if (role === "kitchen" || role === "barista") {
+      scheduleQueueFetch()
+      ringForOrder(orderId, "new")
+    }
+  })
+
+  useSocketEvent("order_item:updated", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:note_changed", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:deleted", () => {
+    scheduleQueueFetch()
+  })
+
+  useSocketEvent("order_item:status_changed", (item) => {
+    scheduleQueueFetch()
+    if (item?.status === "Ready" && role === "cashier") {
+      const orderId = item?.order_id ?? item?.order?.order_id
+      ringForOrder(orderId, "ready")
+    }
+  })
+
+  useSocketEvent("order:status_changed", (order) => {
+    if (order?.status === "Served" && role === "cashier") {
+      ringForOrder(order?.order_id, "ready")
+    }
+  })
+
+  let count = 0
+  if (role === "kitchen") count = kitchenQueue.filter((i) => i.status === "Pending").length
+  if (role === "barista") count = baristaQueue.filter((i) => i.status === "Pending").length
+
+  const refresh = useCallback(() => {
+    if (role === "kitchen") fetchKitchenQueue().catch(() => {})
+    if (role === "barista") fetchBaristaQueue().catch(() => {})
+  }, [role, fetchKitchenQueue, fetchBaristaQueue])
+
+  return { count, bellRinging, connected, refresh }
+}
+```
+
+---
+
+### 2. `frontend/src/components/station/StationOrders.jsx`
+
+```jsx
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import {
+  Clock,
+  Flame,
+  Wifi,
+  WifiOff,
+  Users,
+  AlertTriangle,
+  Check,
+  RefreshCw,
+  Loader2,
+  Maximize2,
+  Minimize2,
+} from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { useOrderItemStore } from "../../context/orderItemContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import { ConnectionBadge } from "@/components/shared"
+import { isAllergyNote } from "@/lib/noteTags"
+import { useLang } from "@/i18n/LanguageContext"
+
+function groupByOrder(items) {
+  const map = new Map()
+  for (const oi of items) {
+    const orderId = oi.order?.order_id
+    if (!map.has(orderId)) {
+      map.set(orderId, {
+        order_id: orderId,
+        queue_number: oi.order?.queue_number,
+        party_size: oi.order?.party_size,
+        table_number: oi.order?.table?.table_number || "—",
+        order_date: oi.order?.order_date,
+        note: oi.order?.note,
+        items: [],
+      })
+    }
+    map.get(orderId).items.push(oi)
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.order_date) - new Date(b.order_date)
+  )
+}
+
+function getWaitMinutes(dateStr, nowMs) {
+  if (!dateStr) return 0
+  return Math.max(0, Math.floor((nowMs - new Date(dateStr).getTime()) / 60000))
+}
+
+function formatWaitLabel(mins) {
+  if (mins < 1) return "<1m"
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+export default function StationOrders({ config }) {
+  const { t, lang } = useLang()
+  usePageTitle(t(config.pageTitleKey))
+
+  const store = useOrderItemStore()
+  const queue = store[config.queueKey] || []
+  const fetchQueue = store[config.fetchKey]
+  const { updateItemStatus, isLoading } = store
+
+  const [filter, setFilter] = useState("all")
+  const [compact, setCompact] = useState(false)
+  const [newOrderIds, setNewOrderIds] = useState(new Set())
+  const [busyOrderIds, setBusyOrderIds] = useState(new Set())
+  const [busyItemIds, setBusyItemIds] = useState(new Set())
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  const newTimersRef = useRef(new Map())
+
+  const { connected } = useSocketRole(config.role)
+
+  const flagNew = useCallback((orderId) => {
+    if (!orderId) return
+    setNewOrderIds((prev) => new Set(prev).add(orderId))
+    const prevTimer = newTimersRef.current.get(orderId)
+    if (prevTimer) clearTimeout(prevTimer)
+    const timer = setTimeout(() => {
+      newTimersRef.current.delete(orderId)
+      setNewOrderIds((prev) => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
+    }, 8000)
+    newTimersRef.current.set(orderId, timer)
+  }, [])
+
+  // Queue refetching on socket events is already debounced in useStaffNotifications (Layout).
+  // Here we only highlight newly arriving orders + keep a 60s safety poll and 15s wait clock.
+  useSocketEvent("order:new", (order) => flagNew(order?.order_id))
+  useSocketEvent("order_item:new", (item) =>
+    flagNew(item?.order_id ?? item?.order?.order_id)
+  )
+
+  useEffect(() => {
+    fetchQueue().catch(() => {})
+    const poll = setInterval(() => fetchQueue().catch(() => {}), 60000)
+    const clock = setInterval(() => setNowMs(Date.now()), 15000)
+    return () => {
+      clearInterval(poll)
+      clearInterval(clock)
+      newTimersRef.current.forEach((timer) => clearTimeout(timer))
+      newTimersRef.current.clear()
+    }
+  }, [fetchQueue])
+
+  const filteredQueue = useMemo(
+    () => (filter === "all" ? queue : queue.filter((i) => i.status === filter)),
+    [queue, filter]
+  )
+
+  const orders = useMemo(() => groupByOrder(filteredQueue), [filteredQueue])
+
+  const stats = useMemo(
+    () => ({
+      all: queue.length,
+      pending: queue.filter((i) => i.status === "Pending").length,
+      preparing: queue.filter((i) => i.status === "Preparing").length,
+    }),
+    [queue]
+  )
+
+  const statusCfg = {
+    Pending: {
+      label: t("status.pending"),
+      pill: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/25",
+      topBar: "bg-[var(--color-warning)]",
+      actionLabel: t(config.labels.startActionKey),
+      actionBtn:
+        "bg-[var(--color-accent-muted)] hover:bg-[var(--color-warning)] text-[var(--color-warning)] hover:text-white border border-[var(--color-warning)]/30",
+      nextStatus: "Preparing",
+      icon: Clock,
+    },
+    Preparing: {
+      label: t(config.labels.preparingKey),
+      pill: "bg-[var(--color-flame-muted)] text-[var(--color-flame)] border border-[var(--color-flame)]/25",
+      topBar: "bg-[var(--color-flame)]",
+      actionLabel: t("station.markReady"),
+      actionBtn:
+        "bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-xs",
+      nextStatus: "Ready",
+      icon: Flame,
+    },
+  }
+
+  const orderStatus = (order) =>
+    order.items.some((i) => i.status === "Pending") ? "Pending" : "Preparing"
+
+  // Double-tap safe whole-ticket advance
+  const advanceOrder = async (order) => {
+    if (busyOrderIds.has(order.order_id)) return
+    const current = orderStatus(order)
+    const next = statusCfg[current]?.nextStatus
+    if (!next) return
+
+    const itemsToUpdate = order.items.filter((i) => i.status === current)
+    if (itemsToUpdate.length === 0) return
+
+    setBusyOrderIds((prev) => new Set(prev).add(order.order_id))
+    try {
+      await Promise.all(
+        itemsToUpdate.map((i) => updateItemStatus(i.order_item_id, next))
+      )
+      await fetchQueue()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setBusyOrderIds((prev) => {
+        const nextSet = new Set(prev)
+        nextSet.delete(order.order_id)
+        return nextSet
+      })
+    }
+  }
+
+  // Double-tap safe single-item bump
+  const advanceItem = async (item) => {
+    if (busyItemIds.has(item.order_item_id)) return
+    const next =
+      item.status === "Pending"
+        ? "Preparing"
+        : item.status === "Preparing"
+          ? "Ready"
+          : null
+    if (!next) return
+
+    setBusyItemIds((prev) => new Set(prev).add(item.order_item_id))
+    try {
+      await updateItemStatus(item.order_item_id, next)
+      await fetchQueue()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setBusyItemIds((prev) => {
+        const nextSet = new Set(prev)
+        nextSet.delete(item.order_item_id)
+        return nextSet
+      })
+    }
+  }
+
+  const HeaderIcon = config.icons.header
+  const EmptyIcon = config.icons.empty
+
+  const filterTabs = [
+    { label: t("station.allOrders"), key: "all", count: stats.all, icon: config.icons.all },
+    { label: t("status.pending"), key: "Pending", count: stats.pending, icon: Clock },
+    { label: t(config.labels.statNowKey), key: "Preparing", count: stats.preparing, icon: Flame },
+  ]
+
+  return (
+    <div className="space-y-4">
+      {/* KDS Top Control Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-2xs">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] flex items-center justify-center shrink-0">
+            <HeaderIcon size={20} />
+          </div>
+          <div>
+            <h1 className="font-display text-xl font-bold text-[var(--color-text)] leading-tight">
+              {t(config.headerKey)}
+            </h1>
+            <p className="text-xs text-[var(--color-muted)] mt-0.5">
+              {t(config.subtitleKey)} · {orders.length} {t("cashier.orders")}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <ConnectionBadge connected={connected} WifiIcon={Wifi} WifiOffIcon={WifiOff} />
+
+          <button
+            type="button"
+            onClick={() => setCompact((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 hover:bg-[var(--color-surface-subtle)] text-xs font-semibold text-[var(--color-text-secondary)] transition-colors cursor-pointer"
+          >
+            {compact ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
+            <span>
+              {compact
+                ? lang === "km"
+                  ? "ពង្រីក"
+                  : "Expand"
+                : lang === "km"
+                  ? "បង្រួម"
+                  : "Compact"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fetchQueue().catch(() => {})}
+            disabled={isLoading}
+            aria-label="Refresh queue"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] text-xs font-semibold text-[var(--color-text-secondary)] transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">{t("guest.refresh")}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter Tabs with Live Item Counters */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        {filterTabs.map(({ label, key, count, icon: Icon }) => {
+          const active = filter === key
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className={cn(
+                "shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer min-h-[42px]",
+                active
+                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
+                  : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/40"
+              )}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+              <span
+                className={cn(
+                  "text-[11px] font-bold px-2 py-0.5 rounded-full tabular-nums",
+                  active
+                    ? "bg-white/20 text-white"
+                    : "bg-[var(--color-surface-subtle)] text-[var(--color-text)]"
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Multi-Column KDS Ticket Board */}
+      {isLoading && orders.length === 0 ? (
+        <div className="text-center py-20 text-[var(--color-muted)] text-sm">
+          {t("cashier.loadingOrders")}
+        </div>
+      ) : orders.length === 0 ? (
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-3xl text-center py-20 px-4 text-[var(--color-muted)]">
+          <EmptyIcon size={40} className="mx-auto mb-3 opacity-30" />
+          <p className="text-sm font-medium">{t("station.noOrders")}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+          {orders.map((order) => {
+            const status = orderStatus(order)
+            const cfg = statusCfg[status]
+            const StatusIcon = cfg.icon
+            const isNew = newOrderIds.has(order.order_id)
+            const isBusy = busyOrderIds.has(order.order_id)
+            const hasAllergy = order.items.some((i) => isAllergyNote(i.note))
+            const waitMins = getWaitMinutes(order.order_date, nowMs)
+            const isLate = waitMins >= 20
+            const isWarn = waitMins >= 10 && waitMins < 20
+            const totalUnits = order.items.reduce((s, i) => s + Number(i.quantity || 0), 0)
+
+            return (
+              <article
+                key={order.order_id}
+                className={cn(
+                  "bg-[var(--color-surface)] border rounded-2xl overflow-hidden shadow-xs flex flex-col transition-all",
+                  hasAllergy
+                    ? "border-[var(--color-danger)] ring-2 ring-[var(--color-danger)]/25"
+                    : isNew
+                      ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30"
+                      : isLate
+                        ? "border-[var(--color-danger)]/60"
+                        : "border-[var(--color-border)]"
+                )}
+              >
+                {/* Status Accent Bar */}
+                <div
+                  className={cn(
+                    "h-1.5 w-full",
+                    hasAllergy ? "bg-[var(--color-danger)]" : cfg.topBar
+                  )}
+                />
+
+                {/* Unmistakable Allergy Banner */}
+                {hasAllergy && (
+                  <div className="bg-[var(--color-danger)] text-white px-4 py-1.5 text-xs font-bold flex items-center gap-2">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    <span>
+                      {lang === "km"
+                        ? "ប្រយ័ត្ន! មានចំណាំអាលែកហ្ស៊ី"
+                        : "ALLERGY ALERT — CHECK ITEM NOTES"}
+                    </span>
+                  </div>
+                )}
+
+                {/* Ticket Header */}
+                <div className="p-4 pb-3 border-b border-[var(--color-border)]/80 flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-[var(--color-primary)] text-white flex flex-col items-center justify-center shrink-0 leading-none">
+                      <span className="text-[9px] uppercase opacity-75">Q</span>
+                      <span className="text-sm font-extrabold tabular-nums">
+                        {order.queue_number != null ? `#${order.queue_number}` : "—"}
+                      </span>
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-base text-[var(--color-text)]">
+                          {t("common.table")} {order.table_number}
+                        </span>
+                        {isNew && (
+                          <span className="text-[10px] font-bold bg-[var(--color-primary)] text-white px-2 py-0.5 rounded-full animate-pulse">
+                            NEW
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-[var(--color-muted)] flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="font-medium tabular-nums">
+                          #{String(order.order_id).padStart(4, "0")}
+                        </span>
+                        <span>· {totalUnits} {t("station.items")}</span>
+                        {order.party_size != null && (
+                          <span className="inline-flex items-center gap-0.5">
+                            · <Users size={11} /> {order.party_size}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Elapsed Wait Timer Pill */}
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full tabular-nums",
+                        isLate
+                          ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)]"
+                          : isWarn
+                            ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                            : "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)]"
+                      )}
+                    >
+                      <Clock size={12} />
+                      {formatWaitLabel(waitMins)}
+                    </span>
+                    <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", cfg.pill)}>
+                      {cfg.label}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Whole-Order Note */}
+                {order.note && (
+                  <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-[var(--color-accent-muted)] border border-[var(--color-warning)]/25 text-xs font-medium text-[var(--color-warning)]">
+                    <span className="font-bold">{t("history.note")}:</span> {order.note}
+                  </div>
+                )}
+
+                {/* Open Ticket Line Items */}
+                {!compact && (
+                  <div className="p-4 space-y-2.5 flex-1">
+                    {order.items.map((item) => {
+                      const allergy = isAllergyNote(item.note)
+                      const itemBusy = busyItemIds.has(item.order_item_id)
+                      const isPreparing = item.status === "Preparing"
+
+                      return (
+                        <div
+                          key={item.order_item_id}
+                          className={cn(
+                            "flex items-start justify-between gap-2.5 p-2.5 rounded-xl border transition-colors",
+                            allergy
+                              ? "bg-[var(--color-danger-muted)]/60 border-[var(--color-danger)]/35"
+                              : isPreparing
+                                ? "bg-[var(--color-accent-muted)]/30 border-[var(--color-warning)]/25"
+                                : "bg-[var(--color-background)]/70 border-[var(--color-border)]/80"
+                          )}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                            <span className="w-7 h-7 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-extrabold text-sm flex items-center justify-center shrink-0 tabular-nums">
+                              {item.quantity}
+                            </span>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-[var(--color-text)] leading-snug">
+                                {menuItemName(item.menu_item, lang)}
+                              </div>
+
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                <span
+                                  className={cn(
+                                    "text-[10px] font-semibold px-1.5 py-0.5 rounded-md",
+                                    isPreparing
+                                      ? "bg-[var(--color-flame-muted)] text-[var(--color-flame)]"
+                                      : "bg-[var(--color-surface-subtle)] text-[var(--color-muted)]"
+                                  )}
+                                >
+                                  {isPreparing
+                                    ? t(config.labels.preparingKey)
+                                    : t("status.pending")}
+                                </span>
+
+                                {item.note && (
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md",
+                                      allergy
+                                        ? "bg-[var(--color-danger)] text-white"
+                                        : "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                                    )}
+                                  >
+                                    {allergy && <AlertTriangle size={10} />}
+                                    <span>{item.note}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Individual Item Bump Button */}
+                          <button
+                            type="button"
+                            disabled={itemBusy || isBusy}
+                            onClick={() => advanceItem(item)}
+                            title={
+                              isPreparing
+                                ? t("station.markReady")
+                                : t(config.labels.startActionKey)
+                            }
+                            aria-label={
+                              isPreparing
+                                ? `Mark ${menuItemName(item.menu_item, lang)} ready`
+                                : `Start ${menuItemName(item.menu_item, lang)}`
+                            }
+                            className={cn(
+                              "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-45",
+                              isPreparing
+                                ? "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)]"
+                                : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-warning)] hover:bg-[var(--color-warning)] hover:text-white hover:border-[var(--color-warning)]"
+                            )}
+                          >
+                            {itemBusy ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : isPreparing ? (
+                              <Check size={15} />
+                            ) : (
+                              <Flame size={14} />
+                            )}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Ticket Primary Action Footer */}
+                <div className="p-4 pt-3 mt-auto border-t border-[var(--color-border)]/70">
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => advanceOrder(order)}
+                    className={cn(
+                      "w-full min-h-[46px] px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-55 active:scale-[0.99]",
+                      cfg.actionBtn
+                    )}
+                  >
+                    {isBusy ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <StatusIcon size={16} />
+                    )}
+                    <span>{cfg.actionLabel}</span>
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+### 3. `frontend/src/components/station/StationMenu.jsx`
+
+```jsx
+import { useState, useEffect, useMemo } from "react"
+import { Search, ToggleLeft, ToggleRight, X } from "lucide-react"
+import { cn, menuItemName, menuItemMatchesSearch, categoryDisplayName } from "@/lib/utils"
+import { formatUSD, formatKHR } from "@/lib/currency"
+import { MenuItemImage } from "@/components/admin/MenuParts"
+import { useMenuItemStore } from "../../context/menuItemContext"
+import { useMenuCategoryStore } from "../../context/menuCategoryContext"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import { useLang } from "@/i18n/LanguageContext"
+
+export default function StationMenu({ config }) {
+  const { t, lang } = useLang()
+  usePageTitle("Menu")
+  const { items, fetchItems, toggleItem, isLoading } = useMenuItemStore()
+  const { categories, fetchCategories } = useMenuCategoryStore()
+
+  const [activeCat, setActiveCat] = useState("All")
+  const [availFilter, setAvailFilter] = useState("all") // "all" | "available" | "soldout"
+  const [search, setSearch] = useState("")
+  const [togglingId, setTogglingId] = useState(null)
+
+  useEffect(() => {
+    fetchItems().catch(() => {})
+    fetchCategories().catch(() => {})
+  }, [fetchItems, fetchCategories])
+
+  const typeCategories = useMemo(
+    () => (categories || []).filter((c) => c.type === config.type),
+    [categories, config.type]
+  )
+
+  const typeCategoryIds = useMemo(
+    () => new Set(typeCategories.map((c) => c.category_id)),
+    [typeCategories]
+  )
+
+  const stationItems = useMemo(
+    () => (items || []).filter((i) => typeCategoryIds.has(i.category_id)),
+    [items, typeCategoryIds]
+  )
+
+  const availCount = useMemo(
+    () => stationItems.filter((i) => i.available).length,
+    [stationItems]
+  )
+  const soldOutCount = stationItems.length - availCount
+
+  const filtered = useMemo(
+    () =>
+      stationItems.filter((i) => {
+        if (activeCat !== "All" && i.category_id !== activeCat) return false
+        if (availFilter === "available" && !i.available) return false
+        if (availFilter === "soldout" && i.available) return false
+        const catName = typeCategories.find((c) => c.category_id === i.category_id)?.category_name
+        return menuItemMatchesSearch(i, search, catName)
+      }),
+    [stationItems, activeCat, availFilter, typeCategories, search]
+  )
+
+  const handleToggle = async (item, e) => {
+    e.stopPropagation()
+    if (togglingId === item.menu_item_id) return
+    setTogglingId(item.menu_item_id)
+    try {
+      await toggleItem(item.menu_item_id, !item.available)
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Search + Availability Filter */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search
+            size={15}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("menu.searchPlaceholder")}
+            className="w-full h-10 pl-10 pr-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] self-start sm:self-auto">
+          {[
+            { key: "all", label: t("common.all"), count: stationItems.length },
+            { key: "available", label: t("common.available"), count: availCount },
+            { key: "soldout", label: t("common.soldOut"), count: soldOutCount },
+          ].map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setAvailFilter(key)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1.5",
+                availFilter === key
+                  ? "bg-[var(--color-primary)] text-white shadow-2xs"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+              )}
+            >
+              <span>{label}</span>
+              <span
+                className={cn(
+                  "text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums",
+                  availFilter === key
+                    ? "bg-white/20 text-white"
+                    : "bg-[var(--color-surface-subtle)] text-[var(--color-muted)]"
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Category Pill Bar */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <button
+          type="button"
+          onClick={() => setActiveCat("All")}
+          className={cn(
+            "shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer",
+            activeCat === "All"
+              ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs"
+              : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40"
+          )}
+        >
+          {t("common.all")}
+        </button>
+        {typeCategories.map((cat) => {
+          const active = activeCat === cat.category_id
+          return (
+            <button
+              key={cat.category_id}
+              type="button"
+              onClick={() => setActiveCat(active ? "All" : cat.category_id)}
+              className={cn(
+                "shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer",
+                active
+                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40"
+              )}
+            >
+              {categoryDisplayName(cat, lang)}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Station Menu Grid */}
+      {isLoading && stationItems.length === 0 ? (
+        <div className="text-center py-16 text-[var(--color-muted)] text-sm">
+          {t("menu.loading")}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl text-center py-16 text-[var(--color-muted)] text-sm">
+          {t("common.noMenuItems")}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
+          {filtered.map((item) => {
+            const busy = togglingId === item.menu_item_id
+            return (
+              <div
+                key={item.menu_item_id}
+                className={cn(
+                  "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xs hover:shadow-md transition-all duration-200 group flex flex-col justify-between relative",
+                  !item.available && "opacity-75"
+                )}
+              >
+                <div className="relative aspect-square overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+                  <MenuItemImage item={item} lang={lang} />
+                  {!item.available && (
+                    <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">
+                      <span className="bg-[var(--color-danger)] text-white text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                        {t("common.soldOut")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 flex flex-col flex-1 justify-between gap-2.5">
+                  <div className="font-semibold text-[var(--color-text)] text-xs sm:text-sm leading-snug line-clamp-2">
+                    {menuItemName(item, lang)}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--color-border)]/60">
+                    <div className="leading-tight">
+                      <div className="text-sm font-bold text-[var(--color-primary)] tabular-nums">
+                        {formatUSD(item.price)}
+                      </div>
+                      <div className="text-[10px] text-[var(--color-muted)] tabular-nums">
+                        {formatKHR(item.price)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggle(item, e)}
+                      disabled={busy}
+                      title={item.available ? t("station.markSoldOut") : t("station.markAvailable")}
+                      aria-label={
+                        item.available
+                          ? `Mark ${menuItemName(item, lang)} sold out`
+                          : `Mark ${menuItemName(item, lang)} available`
+                      }
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50",
+                        item.available
+                          ? "bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-danger-muted)] hover:text-[var(--color-danger)]"
+                          : "bg-[var(--color-danger-muted)] text-[var(--color-danger)] hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)]"
+                      )}
+                    >
+                      {item.available ? <ToggleRight size={17} /> : <ToggleLeft size={17} />}
+                      <span className="hidden sm:inline">
+                        {item.available ? t("common.available") : t("common.soldOut")}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+### 4. `frontend/src/components/station/StationStock.jsx`
+
+```jsx
+import { useState, useEffect, useMemo } from "react"
+import {
+  Package,
+  Minus,
+  Plus,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  Check,
+  X,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { useStockStore } from "../../context/stockContext"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import { EmptyState, LoadingState } from "@/components/shared"
+import { useLang } from "@/i18n/LanguageContext"
+import { StockImage, StockTypeBadge } from "@/components/admin/StockParts"
+
+export default function StationStock() {
+  const { t, lang } = useLang()
+  usePageTitle("Stock")
+  const { stockItems, fetchStock, decreaseStock, isLoading } = useStockStore()
+
+  const [search, setSearch] = useState("")
+  const [lowOnly, setLowOnly] = useState(false)
+  const [expandedId, setExpandedId] = useState(null)
+  const [qty, setQty] = useState({})
+  const [busy, setBusy] = useState(null)
+  const [error, setError] = useState({})
+  const [success, setSuccess] = useState({})
+
+  useEffect(() => {
+    fetchStock().catch(() => {})
+  }, [fetchStock])
+
+  const isLow = (item) =>
+    Number(item.quantity) <= 0 ||
+    (item.min_level != null && Number(item.quantity) <= Number(item.min_level))
+
+  const lowCount = useMemo(
+    () => (stockItems || []).filter(isLow).length,
+    [stockItems]
+  )
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return (stockItems || []).filter((item) => {
+      if (lowOnly && !isLow(item)) return false
+      if (!q) return true
+      return (
+        String(item.item_name || "").toLowerCase().includes(q) ||
+        String(item.unit?.unit_name || "").toLowerCase().includes(q)
+      )
+    })
+  }, [stockItems, search, lowOnly])
+
+  const adjustQty = (id, delta) => {
+    setError((prev) => ({ ...prev, [id]: null }))
+    setQty((prev) => {
+      const cur = parseFloat(prev[id]) || 0
+      const next = Math.max(0, Math.round((cur + delta) * 100) / 100)
+      return { ...prev, [id]: next === 0 ? "" : String(next) }
+    })
+  }
+
+  const handleDecrease = async (item) => {
+    const amount = parseFloat(qty[item.stock_id]) || 0
+    if (amount <= 0) {
+      setError((prev) => ({ ...prev, [item.stock_id]: t("station.enterValidQty") }))
+      return
+    }
+    if (amount > Number(item.quantity)) {
+      setError((prev) => ({ ...prev, [item.stock_id]: t("station.notEnoughStock") }))
+      return
+    }
+
+    setBusy(item.stock_id)
+    setError((prev) => ({ ...prev, [item.stock_id]: null }))
+    try {
+      await decreaseStock(item.stock_id, amount)
+      setQty((prev) => ({ ...prev, [item.stock_id]: "" }))
+      setSuccess((prev) => ({ ...prev, [item.stock_id]: true }))
+      setTimeout(() => {
+        setSuccess((prev) => ({ ...prev, [item.stock_id]: false }))
+      }, 2200)
+      setExpandedId(null)
+    } catch (err) {
+      setError((prev) => ({
+        ...prev,
+        [item.stock_id]: err?.response?.data?.message || t("common.failed"),
+      }))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header + Search + Low Stock Filter */}
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] flex items-center justify-center shrink-0">
+              <Package size={19} />
+            </div>
+            <div>
+              <h1 className="font-display text-xl font-bold text-[var(--color-text)] leading-tight">
+                {t("nav.stock")}
+              </h1>
+              <p className="text-xs text-[var(--color-muted)] mt-0.5">
+                {t("station.stockSubtitle")}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setLowOnly((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer self-start sm:self-auto",
+              lowOnly
+                ? "bg-[var(--color-danger)] text-white border-[var(--color-danger)]"
+                : "bg-[var(--color-background)]/60 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-warning)]"
+            )}
+          >
+            <AlertTriangle size={13} />
+            <span>
+              {t("stock.lowStockOnly")} ({lowCount})
+            </span>
+          </button>
+        </div>
+
+        <div className="relative max-w-md">
+          <Search
+            size={15}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] pointer-events-none"
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("stock.searchPlaceholder")}
+            className="w-full h-10 pl-10 pr-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/75 outline-none focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Stock Item List */}
+      {isLoading && stockItems.length === 0 ? (
+        <LoadingState text={t("stock.loadingStock")} />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Package} text={t("station.noStock")} />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {filtered.map((item) => {
+            const low = isLow(item)
+            const out = Number(item.quantity) <= 0
+            const expanded = expandedId === item.stock_id
+            const takeVal = parseFloat(qty[item.stock_id]) || 0
+            const remaining = Number(item.quantity) - takeVal
+
+            return (
+              <div
+                key={item.stock_id}
+                className={cn(
+                  "bg-[var(--color-surface)] border rounded-2xl overflow-hidden shadow-2xs transition-all",
+                  out
+                    ? "border-[var(--color-danger)]/45"
+                    : low
+                      ? "border-[var(--color-warning)]/40"
+                      : "border-[var(--color-border)]"
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(expanded ? null : item.stock_id)}
+                  className="w-full flex items-center gap-3.5 px-4 py-3.5 hover:bg-[var(--color-surface-subtle)]/55 transition-colors text-left cursor-pointer"
+                >
+                  <StockImage
+                    item={item}
+                    size={56}
+                    className="rounded-xl border border-[var(--color-border)]/70"
+                    placeholderClassName={
+                      low ? "bg-[var(--color-accent-muted)]" : "bg-[var(--color-primary-muted)]"
+                    }
+                    iconClassName={
+                      low ? "text-[var(--color-warning)]" : "text-[var(--color-primary)]"
+                    }
+                  />
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-[var(--color-text)] truncate">
+                        {item.item_name}
+                      </span>
+                      <StockTypeBadge type={item.stock_type} />
+                      {low && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full",
+                            out
+                              ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)]"
+                              : "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                          )}
+                        >
+                          <AlertTriangle size={10} />
+                          {out ? t("stock.outOfStock") : t("ing.lowStock")}
+                        </span>
+                      )}
+                      {success[item.stock_id] && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-primary)] bg-[var(--color-primary-muted)] px-2 py-0.5 rounded-full">
+                          <Check size={10} /> {t("common.done")}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-xs text-[var(--color-muted)] mt-1 tabular-nums">
+                      <span className="font-bold text-[var(--color-text-secondary)]">
+                        {Number(item.quantity).toFixed(2)} {item.unit?.unit_name}
+                      </span>
+                      {item.min_level != null && (
+                        <span>
+                          {" "}
+                          · {t("stock.minLevel")}: {Number(item.min_level).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {expanded ? (
+                    <ChevronUp size={16} className="text-[var(--color-muted)] shrink-0" />
+                  ) : (
+                    <ChevronDown size={16} className="text-[var(--color-muted)] shrink-0" />
+                  )}
+                </button>
+
+                {expanded && (
+                  <div className="border-t border-[var(--color-border)] bg-[var(--color-background)]/45 px-4 py-3.5 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[var(--color-muted)]">
+                        {lang === "km"
+                          ? `តើអ្នកដកប៉ុន្មាន ${item.unit?.unit_name || ""} ចេញពីឃ្លាំង?`
+                          : `How many ${item.unit?.unit_name || "units"} are you taking?`}
+                      </span>
+                      {takeVal > 0 && (
+                        <span
+                          className={cn(
+                            "font-semibold tabular-nums",
+                            remaining < 0
+                              ? "text-[var(--color-danger)]"
+                              : "text-[var(--color-primary)]"
+                          )}
+                        >
+                          {lang === "km" ? "នៅសល់" : "Left"}: {remaining.toFixed(2)}{" "}
+                          {item.unit?.unit_name}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => adjustQty(item.stock_id, -1)}
+                        aria-label="Decrease quantity"
+                        className="w-9 h-9 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] cursor-pointer"
+                      >
+                        <Minus size={14} />
+                      </button>
+
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        inputMode="decimal"
+                        value={qty[item.stock_id] || ""}
+                        onChange={(e) => {
+                          setError((prev) => ({ ...prev, [item.stock_id]: null }))
+                          setQty((prev) => ({ ...prev, [item.stock_id]: e.target.value }))
+                        }}
+                        placeholder="0"
+                        className="flex-1 h-9 text-center text-sm font-bold tabular-nums bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3 outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 focus:border-[var(--color-primary)]"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => adjustQty(item.stock_id, 1)}
+                        aria-label="Increase quantity"
+                        className="w-9 h-9 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] cursor-pointer"
+                      >
+                        <Plus size={14} />
+                      </button>
+
+                      <span className="text-xs font-semibold text-[var(--color-muted)] min-w-[40px]">
+                        {item.unit?.unit_name}
+                      </span>
+                    </div>
+
+                    {/* Quick Increment Chips */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {[0.5, 1, 2, 5].map((step) => (
+                        <button
+                          key={step}
+                          type="button"
+                          onClick={() => adjustQty(item.stock_id, step)}
+                          className="px-2.5 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors cursor-pointer tabular-nums"
+                        >
+                          +{step}
+                        </button>
+                      ))}
+                    </div>
+
+                    {error[item.stock_id] && (
+                      <p role="alert" className="text-xs font-medium text-[var(--color-danger)]">
+                        {error[item.stock_id]}
+                      </p>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleDecrease(item)}
+                      disabled={busy === item.stock_id || out}
+                      className="w-full h-10 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer"
+                    >
+                      {busy === item.stock_id ? t("common.updating") : t("station.confirmTake")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+### 5. `frontend/src/components/shared/Modal.jsx`
+Adds `Escape` closing, scroll lock, and `aria-label` across all modals & `ConfirmModal`.
+
+```jsx
+import { useEffect } from "react"
+import { cn } from "@/lib/utils"
+import { X } from "lucide-react"
+
+export function Modal({ open, onClose, title, children, maxWidth = "max-w-sm" }) {
+  useEffect(() => {
+    if (!open) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape" && onClose) onClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKeyDown)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[2px] p-4"
+      onClick={() => onClose?.()}
+    >
+      <div
+        className={cn(
+          "bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full border border-[var(--color-border)] overflow-hidden",
+          maxWidth
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {title && (
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
+            <div className="font-semibold text-sm text-[var(--color-text)]">{title}</div>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close modal"
+                className="p-1 rounded-lg text-[var(--color-muted)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        )}
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+Say **"Phase 5"** whenever you're ready for the final batch: **Admin Dashboard (fixed parallel loading), Menu & Stock (image compression + blob URL cleanup), Unified OrderHistoryView (deduplicating Admin & Cashier), Reports (XSS/CSV-safe exports + active-tab-only refresh), and `vite.config.js` cleanup**!

@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from "react"
 const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL || "").replace(/\/$/, "")
 
 let socket = null
+const resetSubscribers = new Set()
 
-// One shared connection for the whole app — every page that needs
-// real-time updates reuses this instead of opening its own socket.
 function getSocket() {
   if (!socket) {
     socket = io(SOCKET_URL, {
@@ -21,58 +20,75 @@ function getSocket() {
   return socket
 }
 
-// Joins the given role's room (e.g. "kitchen", "cashier") so this client
+function useSocketEpoch() {
+  const [epoch, setEpoch] = useState(0)
+  useEffect(() => {
+    const bump = () => setEpoch((n) => n + 1)
+    resetSubscribers.add(bump)
+    return () => {
+      resetSubscribers.delete(bump)
+    }
+  }, [])
+  return epoch
+}
 
 export function useSocketRole(role) {
+  const epoch = useSocketEpoch()
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
     if (!role) return
     const s = getSocket()
 
-    const join = () => {
+    const onConnect = () => {
       s.emit("join_role", role)
       setConnected(true)
     }
+    const onDisconnect = () => setConnected(false)
 
-    if (s.connected) join()
-    s.on("connect", join)
-    s.on("disconnect", () => setConnected(false))
+    if (s.connected) onConnect()
+    s.on("connect", onConnect)
+    s.on("disconnect", onDisconnect)
 
     return () => {
-      s.off("connect", join)
+      s.off("connect", onConnect)
+      s.off("disconnect", onDisconnect)
     }
-  }, [role])
+  }, [role, epoch])
 
   return { socket: getSocket(), connected }
 }
 
 export function useSocketTable(tableId) {
+  const epoch = useSocketEpoch()
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
     if (!tableId) return
     const s = getSocket()
 
-    const join = () => {
+    const onConnect = () => {
       s.emit("join_table", tableId)
       setConnected(true)
     }
+    const onDisconnect = () => setConnected(false)
 
-    if (s.connected) join()
-    s.on("connect", join)
-    s.on("disconnect", () => setConnected(false))
+    if (s.connected) onConnect()
+    s.on("connect", onConnect)
+    s.on("disconnect", onDisconnect)
 
     return () => {
       s.emit("leave_table", tableId)
-      s.off("connect", join)
+      s.off("connect", onConnect)
+      s.off("disconnect", onDisconnect)
     }
-  }, [tableId])
+  }, [tableId, epoch])
 
   return { socket: getSocket(), connected }
 }
 
 export function useSocketEvent(eventName, handler) {
+  const epoch = useSocketEpoch()
   const handlerRef = useRef(handler)
   handlerRef.current = handler
 
@@ -82,7 +98,7 @@ export function useSocketEvent(eventName, handler) {
     const wrapped = (...args) => handlerRef.current?.(...args)
     s.on(eventName, wrapped)
     return () => s.off(eventName, wrapped)
-  }, [eventName])
+  }, [eventName, epoch])
 }
 
 export function resetSocket() {
@@ -90,6 +106,7 @@ export function resetSocket() {
     socket.disconnect()
     socket = null
   }
+  resetSubscribers.forEach((fn) => fn())
 }
 
 export default getSocket
