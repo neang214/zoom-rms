@@ -53,10 +53,18 @@ function OrderRow({ order, onPay, onView, onDelete }) {
             className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer">
             <Eye size={15} />
           </button>
-          {hasEditableItems && (
-            <button onClick={() => onView(order)}
-              title={t("common.edit")}
-              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-warning)] hover:bg-[var(--color-accent-muted)] hover:border-[var(--color-warning)]/30 transition-colors cursor-pointer">
+          {!isPaid && (
+            <button
+              onClick={() => hasEditableItems && onView(order)}
+              disabled={!hasEditableItems}
+              title={hasEditableItems ? t("common.edit") : "Locked: already cooking or ready"}
+              className={cn(
+                "p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] transition-colors",
+                hasEditableItems
+                  ? "hover:text-[var(--color-warning)] hover:bg-[var(--color-accent-muted)] hover:border-[var(--color-warning)]/30 cursor-pointer"
+                  : "opacity-35 cursor-not-allowed"
+              )}
+            >
               <Pencil size={15} />
             </button>
           )}
