@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { cn, menuItemName } from "@/lib/utils"
 import { useOrderItemStore } from "../../context/orderItemContext"
+import { useMenuItemStore } from "../../context/menuItemContext"
 import { useSocketRole, useSocketEvent } from "../../services/socket"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import { ConnectionBadge } from "@/components/shared"
@@ -65,6 +66,33 @@ export default function StationOrders({ config }) {
   const queue = store[config.queueKey] || []
   const fetchQueue = store[config.fetchKey]
   const { updateItemStatus, isLoading } = store
+  const { items: menuItems, fetchItems: fetchMenuItems } = useMenuItemStore()
+
+  useEffect(() => {
+    if (menuItems.length === 0) {
+      fetchMenuItems().catch(() => {})
+    }
+  }, [menuItems.length, fetchMenuItems])
+
+  const menuLookup = useMemo(() => {
+    const byId = new Map()
+    const byName = new Map()
+    for (const m of menuItems || []) {
+      if (m.menu_item_id != null) byId.set(m.menu_item_id, m)
+      if (m.item_name) byName.set(m.item_name.toLowerCase(), m)
+    }
+    return { byId, byName }
+  }, [menuItems])
+
+  const resolveMenuItem = (oi) => {
+    const mi = oi.menu_item || {}
+    if (mi.image_url) return mi
+    const id = oi.menu_item_id ?? mi.menu_item_id
+    const cached =
+      (id != null && menuLookup.byId.get(id)) ||
+      (mi.item_name && menuLookup.byName.get(mi.item_name.toLowerCase()))
+    return cached ? { ...cached, ...mi, image_url: cached.image_url } : mi
+  }
 
   const [filter, setFilter] = useState("all")
   const [compact, setCompact] = useState(false)
@@ -468,7 +496,7 @@ export default function StationOrders({ config }) {
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             {/* Menu Item Photo */}
                             <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-[var(--color-surface-subtle)] border border-[var(--color-border)]/70 shrink-0">
-                              <MenuItemImage item={item.menu_item} lang={lang} iconSize={20} />
+                              <MenuItemImage item={resolveMenuItem(item)} lang={lang} iconSize={20} />
                             </div>
 
                             {/* Quantity Badge */}
