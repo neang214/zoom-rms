@@ -154,6 +154,40 @@ export const useOrderStore = create((set, get) => ({
         }
     },
 
+    updateOrderItemQuantity: async (itemId, quantity) => {
+        try {
+            const res = await api.patch(`/order-items/${itemId}/quantity`, { quantity });
+            set({
+                orders: get().orders.map((o) => ({
+                    ...o,
+                    order_items: (o.order_items || []).map((oi) =>
+                        oi.order_item_id === itemId ? { ...oi, quantity: res.data.quantity } : oi,
+                    ),
+                })),
+            });
+            return res.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    updateOrderItemNote: async (itemId, note) => {
+        try {
+            const res = await api.patch(`/order-items/${itemId}/note`, { note });
+            set({
+                orders: get().orders.map((o) => ({
+                    ...o,
+                    order_items: (o.order_items || []).map((oi) =>
+                        oi.order_item_id === itemId ? { ...oi, note: res.data.note } : oi,
+                    ),
+                })),
+            });
+            return res.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+
     fetchOrderHistory: async (dateOrParams, tableId) => {
         try {
             let params = {};

@@ -1,4 +1,4 @@
-import { Eye, Printer, CreditCard, Users, AlertTriangle, Trash2 } from "lucide-react"
+import { Eye, Printer, CreditCard, Users, AlertTriangle, Trash2, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isAllergyNote } from "@/lib/noteTags"
 import { orderTotal, statusConfig, printOrderReceipt } from "./orderHelpers"
@@ -11,6 +11,7 @@ function OrderRow({ order, onPay, onView, onDelete }) {
   const itemCount = order.order_items?.reduce((s, oi) => s + oi.quantity, 0) || 0
   const hasAllergy = order.order_items?.some(oi => isAllergyNote(oi.note))
   const isPaid = order.is_paid ?? order.status === "Paid"
+  const hasEditableItems = !isPaid && order.order_items?.some(oi => oi.status === "Pending")
   return (
     <tr className="border-b border-[var(--color-border)] hover:bg-[var(--color-primary-muted)]/40 transition-colors">
       <td className="py-3 px-3">
@@ -49,9 +50,16 @@ function OrderRow({ order, onPay, onView, onDelete }) {
           </button>
           <button onClick={() => onView(order)}
             title={t("cashier.viewDetails")}
-            className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors">
+            className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer">
             <Eye size={15} />
           </button>
+          {hasEditableItems && (
+            <button onClick={() => onView(order)}
+              title={t("common.edit")}
+              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-warning)] hover:bg-[var(--color-accent-muted)] hover:border-[var(--color-warning)]/30 transition-colors cursor-pointer">
+              <Pencil size={15} />
+            </button>
+          )}
           {onDelete && !isPaid && (
             <button onClick={() => onDelete(order)}
               title={t("common.delete")}

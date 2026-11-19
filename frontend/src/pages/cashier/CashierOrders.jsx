@@ -16,7 +16,7 @@ import PaymentDialog from "@/components/cashier/PaymentDialog"
 export default function CashierOrders() {
   const { t, lang } = useLang()
   usePageTitle("Order Management")
-  const { orders, fetchOrders, deleteOrder, deleteOrderItem, isLoading } = useOrderStore()
+  const { orders, fetchOrders, deleteOrder, deleteOrderItem, updateOrderItemQuantity, updateOrderItemNote, isLoading } = useOrderStore()
   const { paymentMethods, fetchPaymentMethods } = usePaymentStore()
 
   const [payOrder, setPayOrder] = useState(null)
@@ -45,6 +45,8 @@ export default function CashierOrders() {
   useSocketEvent("order_item:new", () => fetchOrders())
   useSocketEvent("order_item:status_changed", () => fetchOrders())
   useSocketEvent("order_item:deleted", () => fetchOrders())
+  useSocketEvent("order_item:updated", () => fetchOrders())
+  useSocketEvent("order_item:note_changed", () => fetchOrders())
   useSocketEvent("payment:completed", () => fetchOrders())
 
   const activeOrders = orders.filter(o => !(o.is_paid ?? o.status === "Paid"))
@@ -243,9 +245,11 @@ export default function CashierOrders() {
       )}
 
       <ViewOrderDialog
-        order={activeViewOrder}
+        order={deleteTarget ? null : activeViewOrder}
         onClose={() => setViewOrder(null)}
         onDeleteItem={requestDeleteItem}
+        onUpdateItemQty={updateOrderItemQuantity}
+        onUpdateItemNote={updateOrderItemNote}
       />
 
       <ConfirmModal

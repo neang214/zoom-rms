@@ -484,3 +484,82 @@ export const deleteItem = async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
+export const updateItemQuantity = async (req, res) => {
+  const itemId = parseInt(req.params.id, 10);
+  const quantity = parseInt(req.body.quantity, 10);
+  if (!Number.isInteger(itemId) || itemId < 1) {
+    return res.status(404).json({ message: "Order item not found" });
+  }
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return res.status(400).json({ message: "Quantity must be at least 1" });
+  }
+
+  try {
+    const existing = await prisma.orderItem.findUnique({
+      where: { order_item_id: itemId },
+      select: { order_id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ message: "Order item not found" });
+    }
+
+    const updatedItem = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.order_id})`;
+
+      const currentItem = await tx.orderItem.findUnique({
+        where: { order_item_id: itemId },
+        include: {
+          order: {
+            select: {
+              table_id: true,
+              status: true,
+              payments: { select: { status: true } },
+            },
+          },
+        },
+      });
+
+      if (!currentItem) {
+        throw httpError(404, "Order item not found");
+      }
+
+      const isPaid =
+        currentItem.order?.status === "Paid" ||
+        currentItem.order?.payments?.some((p) => p.status === "Completed");
+
+      if (isPaid) {
+        throw httpError(400, "Cannot update an order that has already been paid");
+      }
+
+      if (currentItem.status !== "Pending") {
+        throw httpError(400, "Cannot update item that is already being prepared");
+      }
+
+      return tx.orderItem.update({
+        where: { order_item_id: itemId },
+        data: { quantity },
+        include: {
+          menu_item: { select: { item_name: true, item_name_km: true, category: { select: { type: true } } } },
+          order: { select: { table_id: true } },
+        },
+      });
+    });
+
+    const io = getIO();
+    const room = updatedItem.menu_item?.category?.type === "drink" ? "role:barista" : "role:kitchen";
+    io.to(room).to("role:cashier").to("role:admin").emit("order_item:updated", updatedItem);
+    if (updatedItem.order?.table_id) {
+      io.to(`table:${updatedItem.order.table_id}`).emit("order_item:updated", updatedItem);
+    }
+
+    res.json(updatedItem);
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error(error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};

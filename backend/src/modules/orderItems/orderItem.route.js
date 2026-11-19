@@ -45,6 +45,12 @@ router.patch(
   authorize("cashier", "admin"),
   orderItemController.updateItemNote,
 );
+router.patch(
+  "/:id/quantity",
+  authenticate,
+  authorize("cashier", "admin"),
+  orderItemController.updateItemQuantity,
+);
 router.delete(
   "/:id",
   authenticate,
