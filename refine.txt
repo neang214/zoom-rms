@@ -1,0 +1,1557 @@
+Here are all 4 upgrades ready to drop in:
+
+1. **Google Font (`Google Sans Flex` + `Kantumruy Pro`):** Switches the entire app to Google’s official open-source variable typeface (**Google Sans Flex** with automatic optical sizing) paired seamlessly with **Kantumruy Pro** for Khmer.
+2. **Refined Menu Items:** Unified, appetizing `4:3` card layout across **Admin, Guest, Cashier, and Station** menus with aligned 2-line titles, clean corner status pills, USD + KHR pricing, and smoother controls.
+3. **Kitchen / Barista Queue List + Menu Photos (`StationOrders.jsx`):** Switched back to a **strict FIFO vertical queue list** (oldest ticket at the top) and added each dish/drink’s **`MenuItemImage` thumbnail** on every item row alongside qty, status pill, allergy alerts, wait timer, and per-item bump button.
+4. **Cashier Confirmation Before Updating (`ViewOrderDialog.jsx` + `CashierMenu.jsx`):**
+   - In **`ViewOrderDialog.jsx`**: Quantity (`+`/`-`) and note edits are staged locally first (highlighting changed rows & showing old → new total), then require an explicit **Review & Confirm Update** step listing every exact change before sending API updates.
+   - In **`CashierMenu.jsx`**: Adding items to an **existing active order** on an occupied table now triggers a confirmation modal before updating the order.
+
+---
+
+### 1. `frontend/index.html` *(Google Sans Flex + Kantumruy Pro)*
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZOOM — Garden Cafe &amp; Wine | Restaurant Management System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,400..800&family=Kantumruy+Pro:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+```
+
+---
+
+### 2. `frontend/src/index.css` *(Font Update)*
+Update the `--font-sans`, `--font-display`, and `body` rules in `frontend/src/index.css`:
+
+```css
+/* Inside @theme { ... } replace --font-sans and --font-display with: */
+  --font-sans: "Google Sans Flex", "Google Sans", "Kantumruy Pro", system-ui, -apple-system, sans-serif;
+  --font-display: "Google Sans Flex", "Google Sans", "Kantumruy Pro", system-ui, -apple-system, sans-serif;
+```
+
+```css
+/* And inside body { ... } add: */
+  font-optical-sizing: auto;
+```
+
+---
+
+### 3. `frontend/src/components/station/StationOrders.jsx` *(FIFO Queue List + Menu Item Photos)*
+
+```jsx
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import {
+  Clock,
+  Flame,
+  Wifi,
+  WifiOff,
+  Users,
+  AlertTriangle,
+  Check,
+  RefreshCw,
+  Loader2,
+  Maximize2,
+  Minimize2,
+} from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { useOrderItemStore } from "../../context/orderItemContext"
+import { useSocketRole, useSocketEvent } from "../../services/socket"
+import { usePageTitle } from "../../hooks/usePageTitle"
+import { ConnectionBadge } from "@/components/shared"
+import { MenuItemImage } from "@/components/admin/MenuParts"
+import { isAllergyNote } from "@/lib/noteTags"
+import { useLang } from "@/i18n/LanguageContext"
+
+function groupByOrder(items) {
+  const map = new Map()
+  for (const oi of items) {
+    const orderId = oi.order?.order_id
+    if (!map.has(orderId)) {
+      map.set(orderId, {
+        order_id: orderId,
+        queue_number: oi.order?.queue_number,
+        party_size: oi.order?.party_size,
+        table_number: oi.order?.table?.table_number || "—",
+        order_date: oi.order?.order_date,
+        note: oi.order?.note,
+        items: [],
+      })
+    }
+    map.get(orderId).items.push(oi)
+  }
+  // Strict FIFO queue order (oldest first)
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.order_date) - new Date(b.order_date)
+  )
+}
+
+function getWaitMinutes(dateStr, nowMs) {
+  if (!dateStr) return 0
+  return Math.max(0, Math.floor((nowMs - new Date(dateStr).getTime()) / 60000))
+}
+
+function formatWaitLabel(mins) {
+  if (mins < 1) return "<1m"
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+export default function StationOrders({ config }) {
+  const { t, lang } = useLang()
+  usePageTitle(t(config.pageTitleKey))
+
+  const store = useOrderItemStore()
+  const queue = store[config.queueKey] || []
+  const fetchQueue = store[config.fetchKey]
+  const { updateItemStatus, isLoading } = store
+
+  const [filter, setFilter] = useState("all")
+  const [compact, setCompact] = useState(false)
+  const [newOrderIds, setNewOrderIds] = useState(new Set())
+  const [busyOrderIds, setBusyOrderIds] = useState(new Set())
+  const [busyItemIds, setBusyItemIds] = useState(new Set())
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  const newTimersRef = useRef(new Map())
+  const { connected } = useSocketRole(config.role)
+
+  const flagNew = useCallback((orderId) => {
+    if (!orderId) return
+    setNewOrderIds((prev) => new Set(prev).add(orderId))
+    const prevTimer = newTimersRef.current.get(orderId)
+    if (prevTimer) clearTimeout(prevTimer)
+    const timer = setTimeout(() => {
+      newTimersRef.current.delete(orderId)
+      setNewOrderIds((prev) => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
+    }, 8000)
+    newTimersRef.current.set(orderId, timer)
+  }, [])
+
+  useSocketEvent("order:new", (order) => flagNew(order?.order_id))
+  useSocketEvent("order_item:new", (item) =>
+    flagNew(item?.order_id ?? item?.order?.order_id)
+  )
+
+  useEffect(() => {
+    fetchQueue().catch(() => {})
+    const poll = setInterval(() => fetchQueue().catch(() => {}), 60000)
+    const clock = setInterval(() => setNowMs(Date.now()), 15000)
+    return () => {
+      clearInterval(poll)
+      clearInterval(clock)
+      newTimersRef.current.forEach((timer) => clearTimeout(timer))
+      newTimersRef.current.clear()
+    }
+  }, [fetchQueue])
+
+  const filteredQueue = useMemo(
+    () => (filter === "all" ? queue : queue.filter((i) => i.status === filter)),
+    [queue, filter]
+  )
+
+  const orders = useMemo(() => groupByOrder(filteredQueue), [filteredQueue])
+
+  const stats = useMemo(
+    () => ({
+      all: queue.length,
+      pending: queue.filter((i) => i.status === "Pending").length,
+      preparing: queue.filter((i) => i.status === "Preparing").length,
+    }),
+    [queue]
+  )
+
+  const statusCfg = {
+    Pending: {
+      label: t("status.pending"),
+      pill: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/25",
+      leftBar: "border-l-4 border-l-[var(--color-warning)]",
+      actionLabel: t(config.labels.startActionKey),
+      actionBtn:
+        "bg-[var(--color-accent-muted)] hover:bg-[var(--color-warning)] text-[var(--color-warning)] hover:text-white border border-[var(--color-warning)]/30",
+      nextStatus: "Preparing",
+      icon: Clock,
+    },
+    Preparing: {
+      label: t(config.labels.preparingKey),
+      pill: "bg-[var(--color-flame-muted)] text-[var(--color-flame)] border border-[var(--color-flame)]/25",
+      leftBar: "border-l-4 border-l-[var(--color-flame)]",
+      actionLabel: t("station.markReady"),
+      actionBtn:
+        "bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-xs",
+      nextStatus: "Ready",
+      icon: Flame,
+    },
+  }
+
+  const orderStatus = (order) =>
+    order.items.some((i) => i.status === "Pending") ? "Pending" : "Preparing"
+
+  const advanceOrder = async (order) => {
+    if (busyOrderIds.has(order.order_id)) return
+    const current = orderStatus(order)
+    const next = statusCfg[current]?.nextStatus
+    if (!next) return
+
+    const itemsToUpdate = order.items.filter((i) => i.status === current)
+    if (itemsToUpdate.length === 0) return
+
+    setBusyOrderIds((prev) => new Set(prev).add(order.order_id))
+    try {
+      await Promise.all(
+        itemsToUpdate.map((i) => updateItemStatus(i.order_item_id, next))
+      )
+      await fetchQueue()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setBusyOrderIds((prev) => {
+        const nextSet = new Set(prev)
+        nextSet.delete(order.order_id)
+        return nextSet
+      })
+    }
+  }
+
+  const advanceItem = async (item) => {
+    if (busyItemIds.has(item.order_item_id)) return
+    const next =
+      item.status === "Pending"
+        ? "Preparing"
+        : item.status === "Preparing"
+          ? "Ready"
+          : null
+    if (!next) return
+
+    setBusyItemIds((prev) => new Set(prev).add(item.order_item_id))
+    try {
+      await updateItemStatus(item.order_item_id, next)
+      await fetchQueue()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setBusyItemIds((prev) => {
+        const nextSet = new Set(prev)
+        nextSet.delete(item.order_item_id)
+        return nextSet
+      })
+    }
+  }
+
+  const HeaderIcon = config.icons.header
+  const EmptyIcon = config.icons.empty
+
+  const filterTabs = [
+    { label: t("station.allOrders"), key: "all", count: stats.all, icon: config.icons.all },
+    { label: t("status.pending"), key: "Pending", count: stats.pending, icon: Clock },
+    { label: t(config.labels.statNowKey), key: "Preparing", count: stats.preparing, icon: Flame },
+  ]
+
+  return (
+    <div className="space-y-4 max-w-5xl mx-auto">
+      {/* Station Queue Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-2xs">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] flex items-center justify-center shrink-0">
+            <HeaderIcon size={20} />
+          </div>
+          <div>
+            <h1 className="font-display text-xl font-bold text-[var(--color-text)] leading-tight">
+              {t(config.headerKey)}
+            </h1>
+            <p className="text-xs text-[var(--color-muted)] mt-0.5">
+              {t(config.subtitleKey)} · {orders.length} {t("cashier.orders")}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <ConnectionBadge connected={connected} WifiIcon={Wifi} WifiOffIcon={WifiOff} />
+
+          <button
+            type="button"
+            onClick={() => setCompact((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 hover:bg-[var(--color-surface-subtle)] text-xs font-semibold text-[var(--color-text-secondary)] transition-colors cursor-pointer"
+          >
+            {compact ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
+            <span>
+              {compact
+                ? lang === "km"
+                  ? "ពង្រីក"
+                  : "Expand"
+                : lang === "km"
+                  ? "បង្រួម"
+                  : "Compact"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fetchQueue().catch(() => {})}
+            disabled={isLoading}
+            aria-label="Refresh queue"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/60 hover:bg-[var(--color-primary-muted)] hover:text-[var(--color-primary)] text-xs font-semibold text-[var(--color-text-secondary)] transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">{t("guest.refresh")}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        {filterTabs.map(({ label, key, count, icon: Icon }) => {
+          const active = filter === key
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className={cn(
+                "shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer min-h-[42px]",
+                active
+                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
+                  : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/40"
+              )}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+              <span
+                className={cn(
+                  "text-[11px] font-bold px-2 py-0.5 rounded-full tabular-nums",
+                  active
+                    ? "bg-white/20 text-white"
+                    : "bg-[var(--color-surface-subtle)] text-[var(--color-text)]"
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Vertical FIFO Queue List */}
+      {isLoading && orders.length === 0 ? (
+        <div className="text-center py-20 text-[var(--color-muted)] text-sm">
+          {t("cashier.loadingOrders")}
+        </div>
+      ) : orders.length === 0 ? (
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-3xl text-center py-20 px-4 text-[var(--color-muted)]">
+          <EmptyIcon size={40} className="mx-auto mb-3 opacity-30" />
+          <p className="text-sm font-medium">{t("station.noOrders")}</p>
+        </div>
+      ) : (
+        <div className="space-y-3.5">
+          {orders.map((order, queueIndex) => {
+            const status = orderStatus(order)
+            const cfg = statusCfg[status]
+            const StatusIcon = cfg.icon
+            const isNew = newOrderIds.has(order.order_id)
+            const isBusy = busyOrderIds.has(order.order_id)
+            const hasAllergy = order.items.some((i) => isAllergyNote(i.note))
+            const waitMins = getWaitMinutes(order.order_date, nowMs)
+            const isLate = waitMins >= 20
+            const isWarn = waitMins >= 10 && waitMins < 20
+            const totalUnits = order.items.reduce((s, i) => s + Number(i.quantity || 0), 0)
+
+            return (
+              <article
+                key={order.order_id}
+                className={cn(
+                  "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl overflow-hidden shadow-xs transition-all",
+                  hasAllergy
+                    ? "border-l-4 border-l-[var(--color-danger)] ring-2 ring-[var(--color-danger)]/25"
+                    : cfg.leftBar,
+                  !hasAllergy && isNew && "ring-2 ring-[var(--color-primary)]/30"
+                )}
+              >
+                {/* Unmistakable Allergy Banner */}
+                {hasAllergy && (
+                  <div className="bg-[var(--color-danger)] text-white px-4 py-1.5 text-xs font-bold flex items-center gap-2">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    <span>
+                      {lang === "km"
+                        ? "ប្រយ័ត្ន! មានចំណាំអាលែកហ្ស៊ី"
+                        : "ALLERGY ALERT — CHECK ITEM NOTES"}
+                    </span>
+                  </div>
+                )}
+
+                {/* Queue Ticket Header Bar */}
+                <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--color-border)]/75">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Queue Number / Position Pill */}
+                    <div
+                      className={cn(
+                        "w-12 h-12 rounded-xl flex flex-col items-center justify-center shrink-0 leading-none",
+                        queueIndex === 0
+                          ? "bg-[var(--color-primary)] text-white shadow-xs"
+                          : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+                      )}
+                    >
+                      <span className="text-[9px] uppercase font-semibold opacity-75">
+                        {order.queue_number != null ? "Q" : `#${queueIndex + 1}`}
+                      </span>
+                      <span className="text-base font-bold tabular-nums mt-0.5">
+                        {order.queue_number != null ? `#${order.queue_number}` : queueIndex + 1}
+                      </span>
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-base text-[var(--color-text)]">
+                          {t("common.table")} {order.table_number}
+                        </span>
+                        <span className="text-xs font-medium text-[var(--color-muted)] tabular-nums">
+                          #{String(order.order_id).padStart(4, "0")}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold px-2.5 py-0.5 rounded-full",
+                            cfg.pill
+                          )}
+                        >
+                          {cfg.label}
+                        </span>
+                        {queueIndex === 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-primary-muted)] text-[var(--color-primary)] uppercase tracking-wide">
+                            {lang === "km" ? "បន្ទាប់" : "Next Up"}
+                          </span>
+                        )}
+                        {isNew && (
+                          <span className="text-[10px] font-bold bg-[var(--color-primary)] text-white px-2 py-0.5 rounded-full animate-pulse">
+                            NEW
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5 text-xs text-[var(--color-muted)] mt-1 flex-wrap">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 font-semibold px-2 py-0.5 rounded-full tabular-nums",
+                            isLate
+                              ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)]"
+                              : isWarn
+                                ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                                : "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)]"
+                          )}
+                        >
+                          <Clock size={11} />
+                          {formatWaitLabel(waitMins)}
+                        </span>
+                        <span>
+                          {new Date(order.order_date).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        <span>
+                          · {totalUnits} {t("station.items")}
+                        </span>
+                        {order.party_size != null && (
+                          <span className="inline-flex items-center gap-1">
+                            · <Users size={11} /> {order.party_size}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ticket Primary Action Button */}
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => advanceOrder(order)}
+                    className={cn(
+                      "w-full sm:w-auto shrink-0 min-h-[44px] px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-55 active:scale-[0.99]",
+                      cfg.actionBtn
+                    )}
+                  >
+                    {isBusy ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <StatusIcon size={16} />
+                    )}
+                    <span>{cfg.actionLabel}</span>
+                  </button>
+                </div>
+
+                {/* Whole-Order Note */}
+                {order.note && (
+                  <div className="mx-4 mt-3 px-3.5 py-2 rounded-xl bg-[var(--color-accent-muted)] border border-[var(--color-warning)]/25 text-xs font-medium text-[var(--color-warning)]">
+                    <span className="font-bold">{t("history.note")}:</span> {order.note}
+                  </div>
+                )}
+
+                {/* Queue Line Items with Menu Photos */}
+                {!compact && (
+                  <div className="p-3.5 sm:p-4 divide-y divide-[var(--color-border)]/70">
+                    {order.items.map((item) => {
+                      const allergy = isAllergyNote(item.note)
+                      const itemBusy = busyItemIds.has(item.order_item_id)
+                      const isPreparing = item.status === "Preparing"
+
+                      return (
+                        <div
+                          key={item.order_item_id}
+                          className={cn(
+                            "flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0 rounded-xl transition-colors",
+                            allergy &&
+                              "bg-[var(--color-danger-muted)]/50 px-2.5 my-1 first:mt-0 last:mb-0 border border-[var(--color-danger)]/25"
+                          )}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            {/* Menu Item Photo */}
+                            <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-[var(--color-surface-subtle)] border border-[var(--color-border)]/70 shrink-0">
+                              <MenuItemImage item={item.menu_item} lang={lang} iconSize={20} />
+                            </div>
+
+                            {/* Quantity Badge */}
+                            <span className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-bold text-sm flex items-center justify-center shrink-0 tabular-nums">
+                              ×{item.quantity}
+                            </span>
+
+                            {/* Item Name + Status + Notes */}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm sm:text-[15px] font-semibold text-[var(--color-text)] leading-snug">
+                                {menuItemName(item.menu_item, lang)}
+                              </div>
+
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                <span
+                                  className={cn(
+                                    "text-[11px] font-semibold px-2 py-0.5 rounded-md",
+                                    isPreparing
+                                      ? "bg-[var(--color-flame-muted)] text-[var(--color-flame)]"
+                                      : "bg-[var(--color-surface-subtle)] text-[var(--color-muted)]"
+                                  )}
+                                >
+                                  {isPreparing
+                                    ? t(config.labels.preparingKey)
+                                    : t("status.pending")}
+                                </span>
+
+                                {item.note && (
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-md",
+                                      allergy
+                                        ? "bg-[var(--color-danger)] text-white"
+                                        : "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                                    )}
+                                  >
+                                    {allergy && <AlertTriangle size={11} />}
+                                    <span>{item.note}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Individual Item Bump Button */}
+                          <button
+                            type="button"
+                            disabled={itemBusy || isBusy}
+                            onClick={() => advanceItem(item)}
+                            title={
+                              isPreparing
+                                ? t("station.markReady")
+                                : t(config.labels.startActionKey)
+                            }
+                            aria-label={
+                              isPreparing
+                                ? `Mark ${menuItemName(item.menu_item, lang)} ready`
+                                : `Start ${menuItemName(item.menu_item, lang)}`
+                            }
+                            className={cn(
+                              "h-9 px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-all cursor-pointer disabled:opacity-45",
+                              isPreparing
+                                ? "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)]"
+                                : "bg-[var(--color-surface-subtle)] border border-[var(--color-border)] text-[var(--color-warning)] hover:bg-[var(--color-warning)] hover:text-white hover:border-[var(--color-warning)]"
+                            )}
+                          >
+                            {itemBusy ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : isPreparing ? (
+                              <>
+                                <Check size={14} />
+                                <span className="hidden sm:inline">{t("status.ready")}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Flame size={14} />
+                                <span className="hidden sm:inline">
+                                  {lang === "km" ? "ចាប់ផ្តើម" : "Start"}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+### 4. Cashier Confirmation Before Update
+
+#### A. `frontend/src/components/cashier/ViewOrderDialog.jsx` *(Staged edits + explicit confirmation diff before saving)*
+
+```jsx
+import { useState, useEffect, useMemo } from "react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  Button,
+  Input,
+  Badge,
+} from "@/components/ui"
+import {
+  Users,
+  AlertTriangle,
+  Printer,
+  Trash2,
+  Plus,
+  Minus,
+  Pencil,
+  Check,
+  X,
+  Loader2,
+  RotateCcw,
+} from "lucide-react"
+import { cn, menuItemName } from "@/lib/utils"
+import { formatUSD, formatKHR, orderTotal } from "@/lib/currency"
+import { isAllergyNote } from "@/lib/noteTags"
+import { printOrderReceipt } from "./orderHelpers"
+import { useLang } from "@/i18n/LanguageContext"
+
+const itemStatusBadge = {
+  Pending: { variant: "secondary", key: "status.pending" },
+  Preparing: { variant: "warning", key: "status.preparing" },
+  Ready: { variant: "success", key: "status.ready" },
+}
+
+export default function ViewOrderDialog({
+  order,
+  onClose,
+  onDeleteItem,
+  onUpdateItemQty,
+  onUpdateItemNote,
+}) {
+  const { t, lang } = useLang()
+  const isPaid = order ? (order.is_paid ?? order.status === "Paid") : false
+
+  // Local staged drafts — nothing hits the API until cashier confirms
+  const [draftQty, setDraftQty] = useState({})
+  const [draftNote, setDraftNote] = useState({})
+  const [editingNoteId, setEditingNoteId] = useState(null)
+  const [noteInput, setNoteInput] = useState("")
+  const [confirming, setConfirming] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [errMsg, setErrMsg] = useState("")
+
+  useEffect(() => {
+    setDraftQty({})
+    setDraftNote({})
+    setEditingNoteId(null)
+    setNoteInput("")
+    setConfirming(false)
+    setSaving(false)
+    setErrMsg("")
+  }, [order?.order_id])
+
+  const getQty = (oi) =>
+    draftQty[oi.order_item_id] !== undefined ? draftQty[oi.order_item_id] : oi.quantity
+
+  const getNote = (oi) =>
+    draftNote[oi.order_item_id] !== undefined ? draftNote[oi.order_item_id] : (oi.note || "")
+
+  const pendingChanges = useMemo(() => {
+    if (!order?.order_items) return []
+    const changes = []
+    for (const oi of order.order_items) {
+      const nextQty =
+        draftQty[oi.order_item_id] !== undefined ? draftQty[oi.order_item_id] : oi.quantity
+      const origNote = (oi.note || "").trim()
+      const nextNote =
+        draftNote[oi.order_item_id] !== undefined
+          ? draftNote[oi.order_item_id].trim()
+          : origNote
+
+      const qtyChanged = nextQty !== oi.quantity
+      const noteChanged = nextNote !== origNote
+
+      if (qtyChanged || noteChanged) {
+        changes.push({
+          oi,
+          qtyChanged,
+          fromQty: oi.quantity,
+          toQty: nextQty,
+          noteChanged,
+          fromNote: origNote,
+          toNote: nextNote,
+        })
+      }
+    }
+    return changes
+  }, [order, draftQty, draftNote])
+
+  const hasChanges = pendingChanges.length > 0
+
+  const originalTotal = order ? orderTotal(order) : 0
+  const draftTotal = useMemo(() => {
+    if (!order?.order_items) return 0
+    return order.order_items.reduce(
+      (sum, oi) => sum + Number(oi.unit_price || 0) * getQty(oi),
+      0
+    )
+  }, [order, draftQty])
+
+  const stageQtyDelta = (oi, delta) => {
+    const next = Math.max(1, getQty(oi) + delta)
+    setErrMsg("")
+    setDraftQty((prev) => {
+      const copy = { ...prev }
+      if (next === oi.quantity) delete copy[oi.order_item_id]
+      else copy[oi.order_item_id] = next
+      return copy
+    })
+  }
+
+  const stageNote = (oi) => {
+    const trimmed = noteInput.trim()
+    const orig = (oi.note || "").trim()
+    setErrMsg("")
+    setDraftNote((prev) => {
+      const copy = { ...prev }
+      if (trimmed === orig) delete copy[oi.order_item_id]
+      else copy[oi.order_item_id] = trimmed
+      return copy
+    })
+    setEditingNoteId(null)
+  }
+
+  const discardDrafts = () => {
+    setDraftQty({})
+    setDraftNote({})
+    setEditingNoteId(null)
+    setConfirming(false)
+    setErrMsg("")
+  }
+
+  const handleConfirmUpdates = async () => {
+    if (!hasChanges || saving) return
+    setSaving(true)
+    setErrMsg("")
+    try {
+      for (const ch of pendingChanges) {
+        if (ch.qtyChanged && onUpdateItemQty) {
+          await onUpdateItemQty(ch.oi.order_item_id, ch.toQty)
+        }
+        if (ch.noteChanged && onUpdateItemNote) {
+          await onUpdateItemNote(ch.oi.order_item_id, ch.toNote || null)
+        }
+      }
+      setDraftQty({})
+      setDraftNote({})
+      setConfirming(false)
+    } catch (err) {
+      setErrMsg(err?.response?.data?.message || t("common.failed"))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!order} onOpenChange={(v) => !v && !saving && onClose()}>
+      <DialogContent className="max-w-md">
+        {order && (
+          <>
+            <DialogHeader>
+              <DialogTitle>
+                {t("common.order")} #{String(order.order_id).padStart(4, "0")}
+              </DialogTitle>
+              <DialogDescription>
+                {t("common.table")} {order.table?.table_number || "—"} ·{" "}
+                {new Date(order.order_date).toLocaleString()}
+              </DialogDescription>
+            </DialogHeader>
+
+            {confirming ? (
+              /* Explicit Cashier Confirmation View */
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-[var(--color-warning)]/30 bg-[var(--color-accent-muted)]/60 p-3.5 text-xs text-[var(--color-warning)] font-medium">
+                  {lang === "km"
+                    ? "សូមពិនិត្យ និងបញ្ជាក់ការកែប្រែខាងក្រោមមុនពេលរក្សាទុក៖"
+                    : "Please review and confirm these updates before saving:"}
+                </div>
+
+                <div className="rounded-2xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]/70 max-h-60 overflow-y-auto">
+                  {pendingChanges.map((ch) => (
+                    <div key={ch.oi.order_item_id} className="p-3 text-xs space-y-1">
+                      <div className="font-semibold text-sm text-[var(--color-text)]">
+                        {menuItemName(ch.oi.menu_item, lang)}
+                      </div>
+                      {ch.qtyChanged && (
+                        <div className="text-[var(--color-text-secondary)]">
+                          {t("common.qty")}:{" "}
+                          <span className="line-through text-[var(--color-muted)]">
+                            ×{ch.fromQty}
+                          </span>{" "}
+                          →{" "}
+                          <span className="font-bold text-[var(--color-primary)]">
+                            ×{ch.toQty}
+                          </span>
+                        </div>
+                      )}
+                      {ch.noteChanged && (
+                        <div className="text-[var(--color-text-secondary)]">
+                          {t("history.note")}:{" "}
+                          <span className="font-semibold text-[var(--color-warning)]">
+                            {ch.toNote || (lang === "km" ? "(លុបចំណាំ)" : "(cleared)")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between text-sm px-1">
+                  <span className="text-[var(--color-muted)] font-medium">
+                    {t("common.total")}
+                  </span>
+                  <div className="tabular-nums flex items-baseline gap-2">
+                    {Math.abs(draftTotal - originalTotal) > 0.001 && (
+                      <span className="text-xs line-through text-[var(--color-muted)]">
+                        {formatUSD(originalTotal)}
+                      </span>
+                    )}
+                    <span className="font-bold text-base text-[var(--color-primary)]">
+                      {formatUSD(draftTotal)}
+                    </span>
+                  </div>
+                </div>
+
+                {errMsg && (
+                  <div
+                    role="alert"
+                    className="text-xs font-medium text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2"
+                  >
+                    {errMsg}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={saving}
+                    onClick={() => setConfirming(false)}
+                    className="flex-1"
+                  >
+                    {t("common.back")}
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={saving}
+                    onClick={handleConfirmUpdates}
+                    className="flex-[1.4]"
+                  >
+                    {saving ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Check size={15} />
+                    )}
+                    <span>
+                      {saving
+                        ? t("common.updating")
+                        : lang === "km"
+                          ? "បញ្ជាក់ការកែប្រែ"
+                          : "Confirm Update"}
+                    </span>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              /* Order Details & Staged Edit View */
+              <>
+                {(order.party_size != null || order.note) && (
+                  <div className="flex flex-wrap gap-1.5 -mt-1">
+                    {order.party_size != null && (
+                      <Badge variant="blue" className="gap-1">
+                        <Users size={11} /> {order.party_size}{" "}
+                        {order.party_size !== 1 ? t("history.guests") : t("history.guest")}
+                      </Badge>
+                    )}
+                    {order.note && (
+                      <Badge variant="warning">
+                        {t("history.note")}: {order.note}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {errMsg && (
+                    <div
+                      role="alert"
+                      className="text-xs font-medium text-[var(--color-danger)] bg-[var(--color-danger-muted)] border border-[var(--color-danger)]/25 rounded-xl px-3 py-2"
+                    >
+                      {errMsg}
+                    </div>
+                  )}
+
+                  <div className="divide-y divide-[var(--color-border)]/70 max-h-[45dvh] overflow-y-auto pr-1">
+                    {order.order_items?.map((oi) => {
+                      const canEdit = !isPaid && oi.status === "Pending"
+                      const curQty = getQty(oi)
+                      const curNote = getNote(oi)
+                      const qtyDirty = curQty !== oi.quantity
+                      const noteDirty = curNote.trim() !== (oi.note || "").trim()
+                      const rowDirty = qtyDirty || noteDirty
+                      const badge = itemStatusBadge[oi.status] || itemStatusBadge.Pending
+
+                      return (
+                        <div
+                          key={oi.order_item_id}
+                          className={cn(
+                            "py-2.5 first:pt-0 last:pb-0 text-sm transition-colors",
+                            rowDirty &&
+                              "bg-[var(--color-primary-muted)]/35 -mx-2 px-2 rounded-xl"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium text-[var(--color-text)] truncate">
+                                  {menuItemName(oi.menu_item, lang)}
+                                </span>
+                                {!(canEdit && onUpdateItemQty) && (
+                                  <span className="text-xs text-[var(--color-muted)] font-semibold">
+                                    ×{curQty}
+                                  </span>
+                                )}
+                                {oi.status && (
+                                  <Badge variant={badge.variant} className="text-[10px] py-0 px-2">
+                                    {t(badge.key)}
+                                  </Badge>
+                                )}
+                                {rowDirty && (
+                                  <span className="text-[10px] font-bold text-[var(--color-primary)]">
+                                    {lang === "km" ? "• បានកែ" : "• Edited"}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {canEdit && onUpdateItemQty && (
+                                <div className="flex items-center gap-1 bg-[var(--color-surface-subtle)] border border-[var(--color-border)] rounded-lg p-0.5">
+                                  <button
+                                    type="button"
+                                    disabled={curQty <= 1}
+                                    onClick={() => stageQtyDelta(oi, -1)}
+                                    aria-label="Decrease quantity"
+                                    className="w-6 h-6 rounded-md bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-35 cursor-pointer"
+                                  >
+                                    <Minus size={11} />
+                                  </button>
+                                  <span className="text-xs font-bold min-w-[18px] text-center tabular-nums">
+                                    {curQty}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => stageQtyDelta(oi, 1)}
+                                    aria-label="Increase quantity"
+                                    className="w-6 h-6 rounded-md bg-[var(--color-primary)] text-white flex items-center justify-center cursor-pointer"
+                                  >
+                                    <Plus size={11} />
+                                  </button>
+                                </div>
+                              )}
+
+                              <span className="font-semibold text-[var(--color-text)] tabular-nums min-w-[56px] text-right">
+                                {formatUSD(Number(oi.unit_price) * curQty)}
+                              </span>
+
+                              {canEdit && onUpdateItemNote && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingNoteId(oi.order_item_id)
+                                    setNoteInput(curNote)
+                                  }}
+                                  title={t("common.edit")}
+                                  aria-label="Edit item note"
+                                  className="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-muted)] transition-colors cursor-pointer"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              )}
+
+                              {onDeleteItem && !isPaid && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteItem(order, oi)}
+                                  title={t("common.delete")}
+                                  aria-label={t("common.delete")}
+                                  className="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-danger-muted)] transition-colors cursor-pointer"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {editingNoteId === oi.order_item_id ? (
+                            <div className="flex items-center gap-1.5 mt-2">
+                              <Input
+                                value={noteInput}
+                                onChange={(e) => setNoteInput(e.target.value)}
+                                placeholder={t("noteTag.freeTextPlaceholder")}
+                                className="h-8 text-xs flex-1"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => stageNote(oi)}
+                                aria-label="Apply note draft"
+                                className="p-1.5 rounded-lg bg-[var(--color-primary)] text-white cursor-pointer"
+                              >
+                                <Check size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingNoteId(null)}
+                                aria-label="Cancel note edit"
+                                className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-muted)] cursor-pointer"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ) : curNote ? (
+                            <div
+                              className={cn(
+                                "inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 px-2 py-0.5 rounded-full",
+                                isAllergyNote(curNote)
+                                  ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)] border border-[var(--color-danger)]/20"
+                                  : "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/20"
+                              )}
+                            >
+                              {isAllergyNote(curNote) && <AlertTriangle size={10} />}
+                              <span>{curNote}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Total Row */}
+                  <div className="border-t border-[var(--color-border)] pt-3 flex items-baseline justify-between">
+                    <span className="text-sm font-semibold text-[var(--color-text-secondary)]">
+                      {t("common.total")}
+                    </span>
+                    <div className="text-right tabular-nums">
+                      {hasChanges && Math.abs(draftTotal - originalTotal) > 0.001 && (
+                        <span className="text-xs line-through text-[var(--color-muted)] mr-2">
+                          {formatUSD(originalTotal)}
+                        </span>
+                      )}
+                      <span className="text-lg font-bold text-[var(--color-primary)]">
+                        {formatUSD(draftTotal)}
+                      </span>
+                      <span className="text-xs text-[var(--color-muted)] ml-2">
+                        {formatKHR(draftTotal)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Confirm / Discard Bar When Changes Are Staged */}
+                  {hasChanges ? (
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={discardDrafts}
+                        className="flex-1"
+                      >
+                        <RotateCcw size={14} />
+                        <span>{lang === "km" ? "បោះបង់ការកែ" : "Discard"}</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => setConfirming(true)}
+                        className="flex-[1.4]"
+                      >
+                        <Check size={15} />
+                        <span>
+                          {lang === "km"
+                            ? `រក្សាទុកការកែ (${pendingChanges.length})`
+                            : `Save Updates (${pendingChanges.length})`}
+                        </span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => printOrderReceipt(order)}
+                      className="w-full"
+                    >
+                      <Printer size={15} /> {t("cashier.printReceipt")}
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+```
+
+#### B. `frontend/src/pages/cashier/CashierMenu.jsx` *(Confirm modal before updating an existing occupied table order)*
+Add these minimal additions to your Phase 3 `CashierMenu.jsx`:
+
+```jsx
+// 1. Add imports at top:
+import { ConfirmModal } from "@/components/shared"
+import { formatUSD } from "@/lib/currency"
+
+// 2. Add state next to confirmOpen:
+const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false)
+
+// 3. Wrap handleConfirm with a guard:
+const requestConfirm = () => {
+  if (submittingRef.current || submitting || submitted) return
+  if (!tableId) {
+    setErrorMsg(t("cashier.selectTablePrompt"))
+    return
+  }
+  if (cartItems.length === 0) return
+
+  // Ask cashier to confirm before updating an existing active order
+  if (existingTableOrder) {
+    setConfirmOpen(false)
+    setUpdateConfirmOpen(true)
+    return
+  }
+  handleConfirm()
+}
+
+// 4. Inside ticketProps, pass:
+//    onConfirm: requestConfirm,
+
+// 5. Render ConfirmModal at the bottom of CashierMenu's JSX:
+const selectedTableObj = tables.find((tb) => String(tb.table_id) === String(tableId))
+const existingCode = existingTableOrder
+  ? `#${String(existingTableOrder.order_id).padStart(4, "0")}`
+  : ""
+
+// ... inside return (...):
+<ConfirmModal
+  open={updateConfirmOpen}
+  onClose={() => !submitting && setUpdateConfirmOpen(false)}
+  onConfirm={async () => {
+    setUpdateConfirmOpen(false)
+    await handleConfirm()
+  }}
+  busy={submitting}
+  title={
+    lang === "km"
+      ? `បញ្ជាក់ការបន្ថែមលើការកុម្ម៉ង់ ${existingCode}?`
+      : `Update Existing Order ${existingCode}?`
+  }
+  message={
+    lang === "km"
+      ? `បន្ថែម ${cartCount} មុខ (${formatUSD(total)}) ចូលទៅការកុម្ម៉ង់សកម្ម ${existingCode} នៅតុ ${selectedTableObj?.table_number || "—"}?`
+      : `Add ${cartCount} item${cartCount === 1 ? "" : "s"} (${formatUSD(total)}) to active Order ${existingCode} at Table ${selectedTableObj?.table_number || "—"}?`
+  }
+  confirmLabel={lang === "km" ? "បញ្ជាក់ការកែប្រែ" : "Confirm Update"}
+  cancelLabel={t("common.cancel")}
+  errorMsg={errorMsg}
+/>
+```
+
+---
+
+### 5. Refined Menu Items (Consistent `4:3` Editorial Cards Across All Roles)
+
+#### A. `frontend/src/components/cashier/CashierMenuGrid.jsx`
+
+```jsx
+import { menuItemName, cn } from "@/lib/utils"
+import { formatUSD, formatKHR } from "@/lib/currency"
+import { Plus, Minus } from "lucide-react"
+import { useLang } from "@/i18n/LanguageContext"
+import { MenuItemImage } from "@/components/admin/MenuParts"
+
+function MenuItemCard({ item, qty, onAdd, onRemove, lang }) {
+  const { t } = useLang()
+  const isSelected = qty > 0
+  const isAvailable = item.available !== false
+
+  return (
+    <div
+      onClick={() => isAvailable && qty === 0 && onAdd(item.menu_item_id)}
+      className={cn(
+        "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-[var(--color-border-strong)] transition-all duration-200 group flex flex-col justify-between relative select-none",
+        isAvailable && qty === 0 && "cursor-pointer active:scale-[0.99]",
+        isSelected && "ring-2 ring-[var(--color-primary)] border-transparent shadow-sm",
+        !isAvailable && "opacity-60"
+      )}
+    >
+      <div className="relative aspect-[4/3] overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+        <MenuItemImage item={item} lang={lang} className="group-hover:scale-[1.04]" />
+        {!isAvailable && (
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">
+            <span className="bg-[var(--color-danger)] text-white text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+              {t("common.soldOut")}
+            </span>
+          </div>
+        )}
+        {isSelected && (
+          <div className="absolute top-2.5 right-2.5 bg-[var(--color-primary)] text-white text-xs font-bold min-w-[26px] h-[26px] px-1.5 rounded-full flex items-center justify-center shadow-md tabular-nums">
+            {qty}
+          </div>
+        )}
+      </div>
+
+      <div className="p-3 sm:p-3.5 flex flex-col flex-1 justify-between gap-2.5">
+        <div className="font-semibold text-[var(--color-text)] text-xs sm:text-sm leading-snug line-clamp-2 min-h-[2.4rem]">
+          {menuItemName(item, lang)}
+        </div>
+
+        <div className="flex items-end justify-between gap-2 pt-2 border-t border-[var(--color-border)]/50">
+          <div className="leading-tight">
+            <div className="text-[15px] font-bold text-[var(--color-primary)] tabular-nums">
+              {formatUSD(item.price)}
+            </div>
+            <div className="text-[11px] text-[var(--color-muted)] tabular-nums mt-0.5">
+              {formatKHR(item.price)}
+            </div>
+          </div>
+
+          {!isAvailable ? (
+            <span className="text-[11px] text-[var(--color-danger)] font-semibold">
+              {t("common.unavailable")}
+            </span>
+          ) : qty === 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onAdd(item.menu_item_id)
+              }}
+              aria-label={`Add ${menuItemName(item, lang)}`}
+              className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0"
+            >
+              <Plus size={16} />
+            </button>
+          ) : (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 bg-[var(--color-surface-subtle)] rounded-xl p-0.5 border border-[var(--color-border)] shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => onRemove(item.menu_item_id)}
+                aria-label="Decrease quantity"
+                className="w-7 h-7 rounded-lg bg-[var(--color-surface)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <Minus size={12} />
+              </button>
+              <span className="text-xs font-bold min-w-[18px] text-center text-[var(--color-text)] tabular-nums">
+                {qty}
+              </span>
+              <button
+                type="button"
+                onClick={() => onAdd(item.menu_item_id)}
+                aria-label="Increase quantity"
+                className="w-7 h-7 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <Plus size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function CashierMenuGrid({ items, loading, cart, onAdd, onRemove }) {
+  const { t, lang } = useLang()
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
+        {Array.from({ length: 8 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden animate-pulse"
+          >
+            <div className="aspect-[4/3] bg-[var(--color-surface-subtle)]" />
+            <div className="p-3.5 space-y-2">
+              <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-3/4" />
+              <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl text-center py-16 text-[var(--color-muted)] text-sm">
+        {t("common.noMenuItems")}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
+      {items.map((item) => (
+        <MenuItemCard
+          key={item.menu_item_id}
+          item={item}
+          qty={cart[item.menu_item_id]?.qty || 0}
+          onAdd={onAdd}
+          onRemove={onRemove}
+          lang={lang}
+        />
+      ))}
+    </div>
+  )
+}
+```
+
+#### B. `MenuGrid` inside `frontend/src/components/admin/MenuParts.jsx`
+Replace `export function MenuGrid(...)` in `MenuParts.jsx` (and import `formatUSD, formatKHR` from `@/lib/currency` at the top of `MenuParts.jsx`):
+
+```jsx
+export function MenuGrid({
+  items,
+  isLoading,
+  categoryName,
+  onEdit,
+  onDelete,
+  onViewSales,
+  archivedMode = false,
+  onRestore,
+  restoringId = null,
+}) {
+  const { t, lang } = useLang()
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {Array.from({ length: 10 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden animate-pulse"
+          >
+            <div className="aspect-[4/3] bg-[var(--color-surface-subtle)]" />
+            <div className="p-3.5 space-y-2">
+              <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-3/4" />
+              <div className="h-3.5 bg-[var(--color-surface-subtle)] rounded w-1/2" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl text-center py-16 text-[var(--color-muted)] text-sm">
+        {archivedMode ? t("menu.noArchived") : t("menu.notFound")}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      {(items || []).map((item) => (
+        <div
+          key={item.menu_item_id}
+          onClick={() => onViewSales?.(item)}
+          className={cn(
+            "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-[var(--color-border-strong)] transition-all duration-200 group flex flex-col relative",
+            onViewSales && "cursor-pointer",
+            (!item.available || archivedMode) && "opacity-75"
+          )}
+        >
+          <div className="relative aspect-[4/3] overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+            <MenuItemImage item={item} lang={lang} className="group-hover:scale-[1.04]" />
+
+            {archivedMode ? (
+              <div className="absolute top-2.5 left-2.5">
+                <span className="inline-flex items-center gap-1 bg-black/65 backdrop-blur-md text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
+                  <Archive size={10} />
+                  {t("menu.archivedBadge")}
+                </span>
+              </div>
+            ) : !item.available ? (
+              <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">
+                <span className="bg-[var(--color-danger)] text-white text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
+                  {t("common.soldOut")}
+                </span>
+              </div>
+            ) : (
+              <div className="absolute top-2.5 left-2.5">
+                <span className="inline-flex items-center gap-1.5 bg-black/55 backdrop-blur-md text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  {t("common.available")}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="p-3.5 flex flex-col flex-1 justify-between gap-2.5">
+            <div className="space-y-1.5">
+              <div className="font-semibold text-[var(--color-text)] text-sm leading-snug line-clamp-2 min-h-[2.45rem]">
+                {menuItemName(item, lang)}
+              </div>
+              <span className="inline-block text-[11px] font-medium text-[var(--color-muted)] bg-[var(--color-surface-subtle)] px-2 py-0.5 rounded-md line-clamp-1 max-w-full">
+                {categoryDisplayName(categoryName(item.category_id), lang)}
+              </span>
+            </div>
+
+            <div className="flex items-end justify-between gap-2 pt-2 border-t border-[var(--color-border)]/50">
+              <div className="leading-tight">
+                <div className="text-[15px] font-bold text-[var(--color-primary)] tabular-nums">
+                  {formatUSD(item.price)}
+                </div>
+                <div className="text-[11px] text-[var(--color-muted)] tabular-nums mt-0.5">
+                  {formatKHR(item.price)}
+                </div>
+              </div>
+
+              {archivedMode ? (
+                <div className="flex items-center gap-1">
+                  {onViewSales && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onViewSales(item)
+                      }}
+                      title={t("menu.viewSales")}
+                      aria-label={t("menu.viewSales")}
+                      className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                    >
+                      <BarChart3 size={14} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRestore?.(item)
+                    }}
+                    disabled={restoringId === item.menu_item_id}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCcw
+                      size={12}
+                      className={cn(restoringId === item.menu_item_id && "animate-spin")}
+                    />
+                    {t("menu.restore")}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-0.5">
+                  {onViewSales && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onViewSales(item)
+                      }}
+                      title={t("menu.viewSales")}
+                      aria-label={t("menu.viewSales")}
+                      className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                    >
+                      <BarChart3 size={14} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEdit(item)
+                    }}
+                    title={t("common.edit")}
+                    aria-label={t("common.edit")}
+                    className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onDelete(item)
+                    }}
+                    title={t("common.delete")}
+                    aria-label={t("common.delete")}
+                    className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+#### C. Quick Alignment Tweak for `GuestMenuGrid` (`GuestOrderParts.jsx`) & `StationMenu.jsx`
+To match the exact same crisp `4:3` aligned menu cards on **Guest** and **Kitchen/Barista Menu** too:
+- Change `aspect-square` → `aspect-[4/3]` on the photo wrapper (and skeleton placeholder).
+- Add `min-h-[2.4rem]` to the title `<div className="font-semibold ... line-clamp-2 min-h-[2.4rem]">` and `hover:-translate-y-0.5` on the outer card.
+
+---
+
+Try these out and let me know if you want any further tweaks to spacing, card density, or the confirmation flow!

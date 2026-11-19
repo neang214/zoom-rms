@@ -17,6 +17,7 @@ import { useOrderItemStore } from "../../context/orderItemContext"
 import { useSocketRole, useSocketEvent } from "../../services/socket"
 import { usePageTitle } from "../../hooks/usePageTitle"
 import { ConnectionBadge } from "@/components/shared"
+import { MenuItemImage } from "@/components/admin/MenuParts"
 import { isAllergyNote } from "@/lib/noteTags"
 import { useLang } from "@/i18n/LanguageContext"
 
@@ -37,6 +38,7 @@ function groupByOrder(items) {
     }
     map.get(orderId).items.push(oi)
   }
+  // Strict FIFO queue order (oldest first)
   return Array.from(map.values()).sort(
     (a, b) => new Date(a.order_date) - new Date(b.order_date)
   )
@@ -72,7 +74,6 @@ export default function StationOrders({ config }) {
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   const newTimersRef = useRef(new Map())
-
   const { connected } = useSocketRole(config.role)
 
   const flagNew = useCallback((orderId) => {
@@ -91,8 +92,6 @@ export default function StationOrders({ config }) {
     newTimersRef.current.set(orderId, timer)
   }, [])
 
-  // Queue refetching on socket events is already debounced in useStaffNotifications (Layout).
-  // Here we only highlight newly arriving orders + keep a 60s safety poll and 15s wait clock.
   useSocketEvent("order:new", (order) => flagNew(order?.order_id))
   useSocketEvent("order_item:new", (item) =>
     flagNew(item?.order_id ?? item?.order?.order_id)
@@ -130,7 +129,7 @@ export default function StationOrders({ config }) {
     Pending: {
       label: t("status.pending"),
       pill: "bg-[var(--color-accent-muted)] text-[var(--color-warning)] border border-[var(--color-warning)]/25",
-      topBar: "bg-[var(--color-warning)]",
+      leftBar: "border-l-4 border-l-[var(--color-warning)]",
       actionLabel: t(config.labels.startActionKey),
       actionBtn:
         "bg-[var(--color-accent-muted)] hover:bg-[var(--color-warning)] text-[var(--color-warning)] hover:text-white border border-[var(--color-warning)]/30",
@@ -140,7 +139,7 @@ export default function StationOrders({ config }) {
     Preparing: {
       label: t(config.labels.preparingKey),
       pill: "bg-[var(--color-flame-muted)] text-[var(--color-flame)] border border-[var(--color-flame)]/25",
-      topBar: "bg-[var(--color-flame)]",
+      leftBar: "border-l-4 border-l-[var(--color-flame)]",
       actionLabel: t("station.markReady"),
       actionBtn:
         "bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white shadow-xs",
@@ -152,7 +151,6 @@ export default function StationOrders({ config }) {
   const orderStatus = (order) =>
     order.items.some((i) => i.status === "Pending") ? "Pending" : "Preparing"
 
-  // Double-tap safe whole-ticket advance
   const advanceOrder = async (order) => {
     if (busyOrderIds.has(order.order_id)) return
     const current = orderStatus(order)
@@ -179,7 +177,6 @@ export default function StationOrders({ config }) {
     }
   }
 
-  // Double-tap safe single-item bump
   const advanceItem = async (item) => {
     if (busyItemIds.has(item.order_item_id)) return
     const next =
@@ -215,8 +212,8 @@ export default function StationOrders({ config }) {
   ]
 
   return (
-    <div className="space-y-4">
-      {/* KDS Top Control Bar */}
+    <div className="space-y-4 max-w-5xl mx-auto">
+      {/* Station Queue Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-2xs">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] flex items-center justify-center shrink-0">
@@ -265,7 +262,7 @@ export default function StationOrders({ config }) {
         </div>
       </div>
 
-      {/* Filter Tabs with Live Item Counters */}
+      {/* Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         {filterTabs.map(({ label, key, count, icon: Icon }) => {
           const active = filter === key
@@ -298,7 +295,7 @@ export default function StationOrders({ config }) {
         })}
       </div>
 
-      {/* Multi-Column KDS Ticket Board */}
+      {/* Vertical FIFO Queue List */}
       {isLoading && orders.length === 0 ? (
         <div className="text-center py-20 text-[var(--color-muted)] text-sm">
           {t("cashier.loadingOrders")}
@@ -309,8 +306,8 @@ export default function StationOrders({ config }) {
           <p className="text-sm font-medium">{t("station.noOrders")}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
-          {orders.map((order) => {
+        <div className="space-y-3.5">
+          {orders.map((order, queueIndex) => {
             const status = orderStatus(order)
             const cfg = statusCfg[status]
             const StatusIcon = cfg.icon
@@ -326,24 +323,13 @@ export default function StationOrders({ config }) {
               <article
                 key={order.order_id}
                 className={cn(
-                  "bg-[var(--color-surface)] border rounded-2xl overflow-hidden shadow-xs flex flex-col transition-all",
+                  "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl overflow-hidden shadow-xs transition-all",
                   hasAllergy
-                    ? "border-[var(--color-danger)] ring-2 ring-[var(--color-danger)]/25"
-                    : isNew
-                      ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30"
-                      : isLate
-                        ? "border-[var(--color-danger)]/60"
-                        : "border-[var(--color-border)]"
+                    ? "border-l-4 border-l-[var(--color-danger)] ring-2 ring-[var(--color-danger)]/25"
+                    : cfg.leftBar,
+                  !hasAllergy && isNew && "ring-2 ring-[var(--color-primary)]/30"
                 )}
               >
-                {/* Status Accent Bar */}
-                <div
-                  className={cn(
-                    "h-1.5 w-full",
-                    hasAllergy ? "bg-[var(--color-danger)]" : cfg.topBar
-                  )}
-                />
-
                 {/* Unmistakable Allergy Banner */}
                 {hasAllergy && (
                   <div className="bg-[var(--color-danger)] text-white px-4 py-1.5 text-xs font-bold flex items-center gap-2">
@@ -356,34 +342,79 @@ export default function StationOrders({ config }) {
                   </div>
                 )}
 
-                {/* Ticket Header */}
-                <div className="p-4 pb-3 border-b border-[var(--color-border)]/80 flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-xl bg-[var(--color-primary)] text-white flex flex-col items-center justify-center shrink-0 leading-none">
-                      <span className="text-[9px] uppercase opacity-75">Q</span>
-                      <span className="text-sm font-extrabold tabular-nums">
-                        {order.queue_number != null ? `#${order.queue_number}` : "—"}
+                {/* Queue Ticket Header Bar */}
+                <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--color-border)]/75">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Queue Number / Position Pill */}
+                    <div
+                      className={cn(
+                        "w-12 h-12 rounded-xl flex flex-col items-center justify-center shrink-0 leading-none",
+                        queueIndex === 0
+                          ? "bg-[var(--color-primary)] text-white shadow-xs"
+                          : "bg-[var(--color-primary-muted)] text-[var(--color-primary)]"
+                      )}
+                    >
+                      <span className="text-[9px] uppercase font-semibold opacity-75">
+                        {order.queue_number != null ? "Q" : `#${queueIndex + 1}`}
+                      </span>
+                      <span className="text-base font-bold tabular-nums mt-0.5">
+                        {order.queue_number != null ? `#${order.queue_number}` : queueIndex + 1}
                       </span>
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-base text-[var(--color-text)]">
                           {t("common.table")} {order.table_number}
                         </span>
+                        <span className="text-xs font-medium text-[var(--color-muted)] tabular-nums">
+                          #{String(order.order_id).padStart(4, "0")}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold px-2.5 py-0.5 rounded-full",
+                            cfg.pill
+                          )}
+                        >
+                          {cfg.label}
+                        </span>
+                        {queueIndex === 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-primary-muted)] text-[var(--color-primary)] uppercase tracking-wide">
+                            {lang === "km" ? "បន្ទាប់" : "Next Up"}
+                          </span>
+                        )}
                         {isNew && (
                           <span className="text-[10px] font-bold bg-[var(--color-primary)] text-white px-2 py-0.5 rounded-full animate-pulse">
                             NEW
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-[var(--color-muted)] flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="font-medium tabular-nums">
-                          #{String(order.order_id).padStart(4, "0")}
+
+                      <div className="flex items-center gap-2.5 text-xs text-[var(--color-muted)] mt-1 flex-wrap">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 font-semibold px-2 py-0.5 rounded-full tabular-nums",
+                            isLate
+                              ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)]"
+                              : isWarn
+                                ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
+                                : "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)]"
+                          )}
+                        >
+                          <Clock size={11} />
+                          {formatWaitLabel(waitMins)}
                         </span>
-                        <span>· {totalUnits} {t("station.items")}</span>
+                        <span>
+                          {new Date(order.order_date).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        <span>
+                          · {totalUnits} {t("station.items")}
+                        </span>
                         {order.party_size != null && (
-                          <span className="inline-flex items-center gap-0.5">
+                          <span className="inline-flex items-center gap-1">
                             · <Users size={11} /> {order.party_size}
                           </span>
                         )}
@@ -391,37 +422,35 @@ export default function StationOrders({ config }) {
                     </div>
                   </div>
 
-                  {/* Elapsed Wait Timer Pill */}
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full tabular-nums",
-                        isLate
-                          ? "bg-[var(--color-danger-muted)] text-[var(--color-danger)]"
-                          : isWarn
-                            ? "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
-                            : "bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)]"
-                      )}
-                    >
-                      <Clock size={12} />
-                      {formatWaitLabel(waitMins)}
-                    </span>
-                    <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", cfg.pill)}>
-                      {cfg.label}
-                    </span>
-                  </div>
+                  {/* Ticket Primary Action Button */}
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => advanceOrder(order)}
+                    className={cn(
+                      "w-full sm:w-auto shrink-0 min-h-[44px] px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-55 active:scale-[0.99]",
+                      cfg.actionBtn
+                    )}
+                  >
+                    {isBusy ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <StatusIcon size={16} />
+                    )}
+                    <span>{cfg.actionLabel}</span>
+                  </button>
                 </div>
 
                 {/* Whole-Order Note */}
                 {order.note && (
-                  <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-[var(--color-accent-muted)] border border-[var(--color-warning)]/25 text-xs font-medium text-[var(--color-warning)]">
+                  <div className="mx-4 mt-3 px-3.5 py-2 rounded-xl bg-[var(--color-accent-muted)] border border-[var(--color-warning)]/25 text-xs font-medium text-[var(--color-warning)]">
                     <span className="font-bold">{t("history.note")}:</span> {order.note}
                   </div>
                 )}
 
-                {/* Open Ticket Line Items */}
+                {/* Queue Line Items with Menu Photos */}
                 {!compact && (
-                  <div className="p-4 space-y-2.5 flex-1">
+                  <div className="p-3.5 sm:p-4 divide-y divide-[var(--color-border)]/70">
                     {order.items.map((item) => {
                       const allergy = isAllergyNote(item.note)
                       const itemBusy = busyItemIds.has(item.order_item_id)
@@ -431,28 +460,32 @@ export default function StationOrders({ config }) {
                         <div
                           key={item.order_item_id}
                           className={cn(
-                            "flex items-start justify-between gap-2.5 p-2.5 rounded-xl border transition-colors",
-                            allergy
-                              ? "bg-[var(--color-danger-muted)]/60 border-[var(--color-danger)]/35"
-                              : isPreparing
-                                ? "bg-[var(--color-accent-muted)]/30 border-[var(--color-warning)]/25"
-                                : "bg-[var(--color-background)]/70 border-[var(--color-border)]/80"
+                            "flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0 rounded-xl transition-colors",
+                            allergy &&
+                              "bg-[var(--color-danger-muted)]/50 px-2.5 my-1 first:mt-0 last:mb-0 border border-[var(--color-danger)]/25"
                           )}
                         >
-                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                            <span className="w-7 h-7 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-extrabold text-sm flex items-center justify-center shrink-0 tabular-nums">
-                              {item.quantity}
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            {/* Menu Item Photo */}
+                            <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-[var(--color-surface-subtle)] border border-[var(--color-border)]/70 shrink-0">
+                              <MenuItemImage item={item.menu_item} lang={lang} iconSize={20} />
+                            </div>
+
+                            {/* Quantity Badge */}
+                            <span className="w-8 h-8 rounded-xl bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-bold text-sm flex items-center justify-center shrink-0 tabular-nums">
+                              ×{item.quantity}
                             </span>
 
+                            {/* Item Name + Status + Notes */}
                             <div className="min-w-0 flex-1">
-                              <div className="text-sm font-semibold text-[var(--color-text)] leading-snug">
+                              <div className="text-sm sm:text-[15px] font-semibold text-[var(--color-text)] leading-snug">
                                 {menuItemName(item.menu_item, lang)}
                               </div>
 
                               <div className="flex items-center gap-1.5 flex-wrap mt-1">
                                 <span
                                   className={cn(
-                                    "text-[10px] font-semibold px-1.5 py-0.5 rounded-md",
+                                    "text-[11px] font-semibold px-2 py-0.5 rounded-md",
                                     isPreparing
                                       ? "bg-[var(--color-flame-muted)] text-[var(--color-flame)]"
                                       : "bg-[var(--color-surface-subtle)] text-[var(--color-muted)]"
@@ -466,13 +499,13 @@ export default function StationOrders({ config }) {
                                 {item.note && (
                                   <span
                                     className={cn(
-                                      "inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md",
+                                      "inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-md",
                                       allergy
                                         ? "bg-[var(--color-danger)] text-white"
                                         : "bg-[var(--color-accent-muted)] text-[var(--color-warning)]"
                                     )}
                                   >
-                                    {allergy && <AlertTriangle size={10} />}
+                                    {allergy && <AlertTriangle size={11} />}
                                     <span>{item.note}</span>
                                   </span>
                                 )}
@@ -496,18 +529,26 @@ export default function StationOrders({ config }) {
                                 : `Start ${menuItemName(item.menu_item, lang)}`
                             }
                             className={cn(
-                              "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-45",
+                              "h-9 px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-all cursor-pointer disabled:opacity-45",
                               isPreparing
                                 ? "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)]"
-                                : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-warning)] hover:bg-[var(--color-warning)] hover:text-white hover:border-[var(--color-warning)]"
+                                : "bg-[var(--color-surface-subtle)] border border-[var(--color-border)] text-[var(--color-warning)] hover:bg-[var(--color-warning)] hover:text-white hover:border-[var(--color-warning)]"
                             )}
                           >
                             {itemBusy ? (
                               <Loader2 size={14} className="animate-spin" />
                             ) : isPreparing ? (
-                              <Check size={15} />
+                              <>
+                                <Check size={14} />
+                                <span className="hidden sm:inline">{t("status.ready")}</span>
+                              </>
                             ) : (
-                              <Flame size={14} />
+                              <>
+                                <Flame size={14} />
+                                <span className="hidden sm:inline">
+                                  {lang === "km" ? "ចាប់ផ្តើម" : "Start"}
+                                </span>
+                              </>
                             )}
                           </button>
                         </div>
@@ -515,26 +556,6 @@ export default function StationOrders({ config }) {
                     })}
                   </div>
                 )}
-
-                {/* Ticket Primary Action Footer */}
-                <div className="p-4 pt-3 mt-auto border-t border-[var(--color-border)]/70">
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => advanceOrder(order)}
-                    className={cn(
-                      "w-full min-h-[46px] px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-55 active:scale-[0.99]",
-                      cfg.actionBtn
-                    )}
-                  >
-                    {isBusy ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <StatusIcon size={16} />
-                    )}
-                    <span>{cfg.actionLabel}</span>
-                  </button>
-                </div>
               </article>
             )
           })}

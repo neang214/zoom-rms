@@ -157,35 +157,63 @@ export function MenuCategoryBar({ categories, activeCat, onSelect }) {
 }
 
 export function MenuGrid({
-  items, isLoading, categoryName, onEdit, onDelete, onViewSales,
-  archivedMode = false, onRestore, restoringId = null,
+  items,
+  isLoading,
+  categoryName,
+  onEdit,
+  onDelete,
+  onViewSales,
+  archivedMode = false,
+  onRestore,
+  restoringId = null,
 }) {
   const { t, lang } = useLang()
-  if (isLoading) return <div className="text-center py-16 text-[var(--color-muted)] text-sm">{t("menu.loading")}</div>
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {Array.from({ length: 10 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden animate-pulse"
+          >
+            <div className="aspect-[4/3] bg-[var(--color-surface-subtle)]" />
+            <div className="p-3.5 space-y-2">
+              <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-3/4" />
+              <div className="h-3.5 bg-[var(--color-surface-subtle)] rounded w-1/2" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   if (items.length === 0) {
     return (
-      <div className="text-center py-16 text-[var(--color-muted)] text-sm">
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl text-center py-16 text-[var(--color-muted)] text-sm">
         {archivedMode ? t("menu.noArchived") : t("menu.notFound")}
       </div>
     )
   }
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-      {(items || []).map(item => (
+      {(items || []).map((item) => (
         <div
           key={item.menu_item_id}
           onClick={() => onViewSales?.(item)}
           className={cn(
-            "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-xs hover:shadow-md hover:border-[var(--color-border-strong)] transition-all duration-200 group flex flex-col relative",
+            "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-[var(--color-border-strong)] transition-all duration-200 group flex flex-col relative",
             onViewSales && "cursor-pointer",
             (!item.available || archivedMode) && "opacity-75"
           )}
         >
-          <div className="relative aspect-square overflow-hidden bg-[var(--color-border)]/40 shrink-0">
-            <MenuItemImage item={item} lang={lang} />
+          <div className="relative aspect-[4/3] overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+            <MenuItemImage item={item} lang={lang} className="group-hover:scale-[1.04]" />
+
             {archivedMode ? (
-              <div className="absolute top-2 left-2">
-                <span className="inline-flex items-center gap-1 bg-black/65 backdrop-blur-md text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
+              <div className="absolute top-2.5 left-2.5">
+                <span className="inline-flex items-center gap-1 bg-black/65 backdrop-blur-md text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
                   <Archive size={10} />
                   {t("menu.archivedBadge")}
                 </span>
@@ -197,36 +225,46 @@ export function MenuGrid({
                 </span>
               </div>
             ) : (
-              <div className="absolute top-2 left-2">
-                <span className="inline-flex items-center gap-1 bg-black/60 backdrop-blur-md text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
+              <div className="absolute top-2.5 left-2.5">
+                <span className="inline-flex items-center gap-1.5 bg-black/55 backdrop-blur-md text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   {t("common.available")}
                 </span>
               </div>
             )}
           </div>
-          <div className="p-3 flex flex-col flex-1 justify-between gap-2">
-            <div>
-              <div className="font-semibold text-[var(--color-text)] text-sm leading-snug line-clamp-2">
+
+          <div className="p-3.5 flex flex-col flex-1 justify-between gap-2.5">
+            <div className="space-y-1.5">
+              <div className="font-semibold text-[var(--color-text)] text-sm leading-snug line-clamp-2 min-h-[2.45rem]">
                 {menuItemName(item, lang)}
               </div>
-              <div className="mt-1">
-                <span className="inline-block text-[10px] font-medium text-[var(--color-muted)] bg-[var(--color-background)] px-2 py-0.5 rounded-md border border-[var(--color-border)] line-clamp-1 max-w-full">
-                  {categoryDisplayName(categoryName(item.category_id), lang)}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between pt-1 border-t border-[var(--color-border)]/60 gap-2">
-              <span className="text-base font-bold text-[var(--color-primary)]">
-                ${Number(item.price).toFixed(2)}
+              <span className="inline-block text-[11px] font-medium text-[var(--color-muted)] bg-[var(--color-surface-subtle)] px-2 py-0.5 rounded-md line-clamp-1 max-w-full">
+                {categoryDisplayName(categoryName(item.category_id), lang)}
               </span>
+            </div>
+
+            <div className="flex items-end justify-between gap-2 pt-2 border-t border-[var(--color-border)]/50">
+              <div className="leading-tight">
+                <div className="text-[15px] font-bold text-[var(--color-primary)] tabular-nums">
+                  {formatUSD(item.price)}
+                </div>
+                <div className="text-[11px] text-[var(--color-muted)] tabular-nums mt-0.5">
+                  {formatKHR(item.price)}
+                </div>
+              </div>
+
               {archivedMode ? (
                 <div className="flex items-center gap-1">
                   {onViewSales && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); onViewSales(item) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onViewSales(item)
+                      }}
                       title={t("menu.viewSales")}
+                      aria-label={t("menu.viewSales")}
                       className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
                     >
                       <BarChart3 size={14} />
@@ -234,11 +272,17 @@ export function MenuGrid({
                   )}
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onRestore?.(item) }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRestore?.(item)
+                    }}
                     disabled={restoringId === item.menu_item_id}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-primary-muted)] text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    <RotateCcw size={12} className={cn(restoringId === item.menu_item_id && "animate-spin")} />
+                    <RotateCcw
+                      size={12}
+                      className={cn(restoringId === item.menu_item_id && "animate-spin")}
+                    />
                     {t("menu.restore")}
                   </button>
                 </div>
@@ -247,8 +291,12 @@ export function MenuGrid({
                   {onViewSales && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); onViewSales(item) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onViewSales(item)
+                      }}
                       title={t("menu.viewSales")}
+                      aria-label={t("menu.viewSales")}
                       className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
                     >
                       <BarChart3 size={14} />
@@ -256,16 +304,24 @@ export function MenuGrid({
                   )}
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onEdit(item) }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEdit(item)
+                    }}
                     title={t("common.edit")}
+                    aria-label={t("common.edit")}
                     className="p-1.5 rounded-lg hover:bg-[var(--color-primary-muted)] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
                   >
                     <Pencil size={14} />
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onDelete(item) }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onDelete(item)
+                    }}
                     title={t("common.delete")}
+                    aria-label={t("common.delete")}
                     className="p-1.5 rounded-lg hover:bg-[var(--color-danger-muted)] text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
                   >
                     <Trash2 size={14} />

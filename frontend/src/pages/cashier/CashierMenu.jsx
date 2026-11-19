@@ -10,6 +10,8 @@ import { usePageTitle } from "../../hooks/usePageTitle"
 import CashierMenuGrid from "@/components/cashier/CashierMenuGrid"
 import CartBar from "@/components/cashier/CartBar"
 import SubmitOrderDialog, { OrderTicketPanel } from "@/components/cashier/SubmitOrderDialog"
+import { ConfirmModal } from "@/components/shared"
+import { formatUSD } from "@/lib/currency"
 import { useLang } from "@/i18n/LanguageContext"
 import { cn, menuItemMatchesSearch, categoryDisplayName } from "@/lib/utils"
 
@@ -26,6 +28,7 @@ export default function CashierMenu() {
   const [search, setSearch] = useState("")
   const [cart, setCart] = useState({})
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [tableId, setTableId] = useState("")
   const [partySize, setPartySize] = useState("")
@@ -231,6 +234,23 @@ export default function CashierMenu() {
     }
   }
 
+  const requestConfirm = () => {
+    if (submittingRef.current || submitting || submitted) return
+    if (!tableId) {
+      setErrorMsg(t("cashier.selectTablePrompt"))
+      return
+    }
+    if (cartItems.length === 0) return
+
+    // Ask cashier to confirm before updating an existing active order
+    if (existingTableOrder) {
+      setConfirmOpen(false)
+      setUpdateConfirmOpen(true)
+      return
+    }
+    handleConfirm()
+  }
+
   const ticketProps = {
     tables,
     tableId,
@@ -252,7 +272,7 @@ export default function CashierMenu() {
     errorMsg,
     submitting,
     submitted,
-    onConfirm: handleConfirm,
+    onConfirm: requestConfirm,
   }
 
   return (
@@ -366,6 +386,29 @@ export default function CashierMenu() {
           setConfirmOpen(v)
         }}
         {...ticketProps}
+      />
+
+      <ConfirmModal
+        open={updateConfirmOpen}
+        onClose={() => !submitting && setUpdateConfirmOpen(false)}
+        onConfirm={async () => {
+          setUpdateConfirmOpen(false)
+          await handleConfirm()
+        }}
+        busy={submitting}
+        title={
+          lang === "km"
+            ? `បញ្ជាក់ការបន្ថែមលើការកុម្ម៉ង់ ${existingTableOrder ? `#${String(existingTableOrder.order_id).padStart(4, "0")}` : ""}?`
+            : `Update Existing Order ${existingTableOrder ? `#${String(existingTableOrder.order_id).padStart(4, "0")}` : ""}?`
+        }
+        message={
+          lang === "km"
+            ? `បន្ថែម ${cartCount} មុខ (${formatUSD(total)}) ចូលទៅការកុម្ម៉ង់សកម្ម ${existingTableOrder ? `#${String(existingTableOrder.order_id).padStart(4, "0")}` : ""} នៅតុ ${tables.find((tb) => String(tb.table_id) === String(tableId))?.table_number || "—"}?`
+            : `Add ${cartCount} item${cartCount === 1 ? "" : "s"} (${formatUSD(total)}) to active Order ${existingTableOrder ? `#${String(existingTableOrder.order_id).padStart(4, "0")}` : ""} at Table ${tables.find((tb) => String(tb.table_id) === String(tableId))?.table_number || "—"}?`
+        }
+        confirmLabel={lang === "km" ? "បញ្ជាក់ការកែប្រែ" : "Confirm Update"}
+        cancelLabel={t("common.cancel")}
+        errorMsg={errorMsg}
       />
     </div>
   )

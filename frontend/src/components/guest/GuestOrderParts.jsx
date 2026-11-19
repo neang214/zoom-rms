@@ -277,7 +277,7 @@ export function GuestMenuGrid({ items, loading, cart, onAdd, onRemove }) {
             key={idx}
             className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden animate-pulse"
           >
-            <div className="aspect-square bg-[var(--color-surface-subtle)]" />
+            <div className="aspect-[4/3] bg-[var(--color-surface-subtle)]" />
             <div className="p-3.5 space-y-2">
               <div className="h-3.5 bg-[var(--color-surface-subtle)] rounded w-3/4" />
               <div className="h-4 bg-[var(--color-surface-subtle)] rounded w-1/3" />
@@ -313,7 +313,7 @@ export function GuestMenuGrid({ items, loading, cart, onAdd, onRemove }) {
             )}
           >
             {/* Square Dish Photo */}
-            <div className="relative aspect-square overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+            <div className="relative aspect-[4/3] overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
               <MenuItemImage item={item} lang={lang} />
 
               {!isAvailable && (

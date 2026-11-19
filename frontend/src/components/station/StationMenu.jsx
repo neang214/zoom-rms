@@ -183,7 +183,7 @@ export default function StationMenu({ config }) {
                   !item.available && "opacity-75"
                 )}
               >
-                <div className="relative aspect-square overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
+                <div className="relative aspect-[4/3] overflow-hidden bg-[var(--color-surface-subtle)] shrink-0">
                   <MenuItemImage item={item} lang={lang} />
                   {!item.available && (
                     <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex items-center justify-center">
